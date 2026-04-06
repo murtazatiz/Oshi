@@ -1,0 +1,46 @@
+{
+  "name": "oshi-backend",
+  "version": "1.0.0",
+  "description": "Oshi backend API — Node.js 20 LTS + Express 4 + TypeScript strict mode",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@prisma/client": "^5.22.0",
+    "@sentry/node": "^8.x",
+    "@supabase/supabase-js": "^2.x",
+    "axios": "^1.x",
+    "bullmq": "^5.x",
+    "cheerio": "^1.x",
+    "cors": "^2.x",
+    "date-fns": "^3.x",
+    "express": "^4.x",
+    "express-rate-limit": "^7.x",
+    "ioredis": "^5.x",
+    "multer": "^1.4.4",
+    "node-cron": "^3.x",
+    "openai": "^4.x",
+    "posthog-node": "^4.x",
+    "zod": "^3.x"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.x",
+    "@types/express": "^4.x",
+    "@types/multer": "^1.4.13",
+    "@types/node": "^20.x",
+    "@types/node-cron": "^3.x",
+    "prisma": "^5.22.0",
+    "tsx": "^4.x",
+    "typescript": "^5.x"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

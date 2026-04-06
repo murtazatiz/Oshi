@@ -1,0 +1,89 @@
+{
+  "expo": {
+    "name": "Oshi",
+    "slug": "oshi",
+    "version": "1.0.0",
+    "scheme": "oshi",
+    "orientation": "portrait",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#1A1A2E"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.oshi.app",
+      "buildNumber": "1",
+      "requireFullScreen": true,
+      "infoPlist": {
+        "UIRequiresFullScreen": true,
+        "NSPhotoLibraryUsageDescription": "Oshi needs access to your photo library to set your profile photo.",
+        "NSCameraUsageDescription": "Oshi needs access to your camera to take a profile photo.",
+        "NSUserNotificationUsageDescription": "Oshi sends daily reminders to help you revisit your saved content."
+      },
+      "entitlements": {
+        "com.apple.security.application-groups": [
+          "group.com.oshi.app"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.oshi.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#1A1A2E"
+      },
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-image-picker",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/adaptive-icon.png",
+          "color": "#1A1A2E",
+          "androidMode": "default"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24
+          }
+        }
+      ],
+      "./plugins/withShareExtension",
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsWebURLWithMaxCount": 1,
+            "NSExtensionActivationSupportsText": true
+          },
+          "androidIntentFilters": ["text/*"],
+          "androidMultiIntentFilters": ["text/*"]
+        }
+      ],
+      "@sentry/react-native"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "94eaea7a-eb38-473d-b0d4-bcbcd1c19925"
+      }
+    },
+    "owner": "murtazatiz"
+  }
+}

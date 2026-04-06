@@ -1,0 +1,28 @@
+---
+description: State management rules for all Zustand store files
+globs: **/store/**
+alwaysApply: false
+---
+
+# State Management Standards
+
+## Zustand
+- Zustand for **all** global state — no Redux, no Context API for shared data
+- Never use `useState` for data that needs to be shared across screens
+
+## Selectors
+- Always use `useShallow` from Zustand to prevent unnecessary re-renders:
+
+```typescript
+// ❌ BAD — causes re-render on every store change
+const { user, isLoading } = useAuthStore();
+
+// ✅ GOOD — only re-renders when user or isLoading actually changes
+const { user, isLoading } = useAuthStore(
+  useShallow((state) => ({ user: state.user, isLoading: state.isLoading }))
+);
+```
+
+## Auth Token Persistence
+- Persist auth tokens via **Expo SecureStore** — not Zustand `persist` middleware
+- Zustand persist middleware is acceptable for non-sensitive UI preferences only

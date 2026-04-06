@@ -1,0 +1,37 @@
+---
+description: React Native / Expo rules for all TSX component files
+globs: **/*.tsx
+alwaysApply: false
+---
+
+# React Native Standards
+
+## SDK & Navigation
+- Expo SDK 51 only — no bare React Native workflow
+- React Navigation v6 for all navigation
+
+## Safe Areas
+- Wrap every screen in `SafeAreaProvider` + `SafeAreaView`
+- Never hardcode status bar heights or insets
+
+## Animations & Gestures
+- All animations must use **React Native Reanimated 2** — never use `Animated` from React Native core
+- All gestures must use **React Native Gesture Handler**
+
+## FlatList
+Every `FlatList` must include:
+```tsx
+<FlatList
+  keyExtractor={(item) => item.id}
+  removeClippedSubviews={true}
+  windowSize={10}
+  // ...
+/>
+```
+
+## Touch Targets
+- Minimum touch target size: **44×44px** — use `minWidth`/`minHeight` or `hitSlop`
+
+## Orientation & Platform
+- Portrait orientation only — lock in `app.json`
+- No iPad support

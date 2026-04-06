@@ -1,0 +1,43 @@
+---
+description: Backend/API rules for Node.js Express route files
+globs: {**/backend/**,**/routes/**}
+alwaysApply: false
+---
+
+# Backend Standards
+
+## Runtime & Framework
+- Node.js 20 LTS
+- Express 4 with TypeScript strict mode
+
+## Route Handlers
+- All routes use `async/await` with `try/catch` — no unhandled promise rejections:
+
+```typescript
+// ❌ BAD
+router.get('/users', async (req, res) => {
+  const users = await UserService.getAll();
+  res.json(users);
+});
+
+// ✅ GOOD
+router.get('/users', async (req, res, next) => {
+  try {
+    const users = await UserService.getAll();
+    res.json(users);
+  } catch (error) {
+    next(error);
+  }
+});
+```
+
+## Validation
+- Validate all request bodies with **Zod** before processing — never trust raw `req.body`
+
+## Async Jobs
+- Use **BullMQ** for all async jobs
+- Never process AI calls synchronously inside route handlers
+
+## Security
+- Rate limiting on **all** routes
+- Never log sensitive data (passwords, tokens, PII)

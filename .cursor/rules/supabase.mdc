@@ -1,0 +1,36 @@
+---
+description: Supabase rules for all Supabase client code and SQL files
+globs: {**/supabase/**,**/*.sql}
+alwaysApply: false
+---
+
+# Supabase Standards
+
+## Row Level Security
+- RLS must be enabled on **every** table — no exceptions
+
+## Keys
+- Never expose the `service_role` key to the client
+- Client always uses the `anon` key only
+
+## Token Storage
+- JWT tokens stored in **Expo SecureStore only**
+- Never store tokens in AsyncStorage
+
+## Realtime
+- Use Supabase Realtime for live updates — never poll for data
+
+## Error Handling
+- Always handle Supabase errors explicitly:
+
+```typescript
+// ❌ BAD
+const { data } = await supabase.from('posts').select('*');
+
+// ✅ GOOD
+const { data, error } = await supabase.from('posts').select('*');
+if (error) {
+  logger.error('Failed to fetch posts', { error });
+  throw new DatabaseError('Unable to retrieve posts', { cause: error });
+}
+```

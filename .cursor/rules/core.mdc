@@ -1,0 +1,44 @@
+---
+description: Core coding standards — always applied across the entire Oshi project
+alwaysApply: true
+---
+
+# Core Standards
+
+## TypeScript
+- Strict mode throughout — `tsconfig.json` must have `"strict": true`
+- Never use `any`. Use `unknown` and narrow it explicitly
+- Use `interface` for all type definitions, not `type` aliases
+
+## Components
+- Functional components only — no class components
+
+## Control Flow
+- Guard clauses for early returns instead of nested `if` statements
+
+```typescript
+// ❌ BAD
+function process(user: User | null) {
+  if (user) {
+    if (user.isActive) {
+      doWork(user);
+    }
+  }
+}
+
+// ✅ GOOD
+function process(user: User | null) {
+  if (!user) return;
+  if (!user.isActive) return;
+  doWork(user);
+}
+```
+
+## Naming
+- Descriptive variable names with auxiliary verbs: `isLoading`, `hasError`, `canSubmit`
+
+## Logging
+- Never use `console.log` in production code — use a logger service instead
+
+## Error Handling
+- Always handle errors explicitly — no empty catch blocks, no silent failures

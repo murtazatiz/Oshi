@@ -1,0 +1,16 @@
+{
+  "hooks": [
+    {
+      "event": "afterFileEdit",
+      "command": "cmd.exe",
+      "args": ["/c", "npx.cmd", "prettier", "--write", "${file}"],
+      "description": "Format edited file with Prettier"
+    },
+    {
+      "event": "afterFileEdit",
+      "command": "cmd.exe",
+      "args": ["/c", "npx.cmd", "tsc", "--noEmit"],
+      "description": "Check TypeScript types after every file edit"
+    }
+  ]
+}

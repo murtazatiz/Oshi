@@ -1,0 +1,19 @@
+{
+  "plugins": {
+    "continual-learning": {
+      "enabled": true
+    },
+    "context7-plugin": {
+      "enabled": true
+    },
+    "posthog": {
+      "enabled": true
+    },
+    "supabase": {
+      "enabled": true
+    },
+    "sentry": {
+      "enabled": true
+    }
+  }
+}

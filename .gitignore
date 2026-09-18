@@ -4,4 +4,4 @@ node_modules/
 
 # Local AI-assistant tooling installed via `npx skills add` — not product code
 .agents/
-skills-lock.json
+skills-lock.json.claude/skills/

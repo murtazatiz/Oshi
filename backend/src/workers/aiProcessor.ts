@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { redisConnection, QUEUE_NAMES, type AiProcessingJobData } from '../queue';
 import { fetchContentMetadata } from '../services/metadataService';
 import { classifyContent, resolveCategoryId } from '../services/aiService';
+import { invalidateSmartSortCache } from '../services/smartSortService';
 import { Sentry } from '../services/sentry';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,10 +38,12 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
   // Step 8-9: Fetch metadata
   const metadata = await fetchContentMetadata(url, platform);
 
-  // Fetch the user's categories so the AI can pick from the actual list
+  // Fetch the user's categories so the AI can pick from the actual list.
+  // categoryId here is the PRE-classification category ("Other" at creation) —
+  // kept for cache invalidation once the final category is assigned.
   const save = await prisma.save.findUnique({
     where: { id: saveId },
-    select: { userId: true },
+    select: { userId: true, categoryId: true },
   });
   if (!save) return; // Save was deleted while processing
 
@@ -96,6 +99,11 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
       aiConfidenceScore: classification.confidence_score,
     },
   });
+
+  // Classification may have moved the save out of its creation-time category
+  // ("Other") — clear the smart-sort ranking cache for both, same contract as
+  // the routes (PRD §3.2.2: any mutation of presence/status/category invalidates).
+  await invalidateSmartSortCache(save.userId, save.categoryId, categoryId);
 
   // Step 12: Supabase Realtime fires automatically when the row is updated —
   // no additional code needed here. The mobile app is subscribed to

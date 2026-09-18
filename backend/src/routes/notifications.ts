@@ -3,13 +3,15 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import { Errors } from '../middleware/errorHandler';
 import { prisma } from '../lib/prisma';
+import {
+  UTC_DAY_NAMES,
+  getTopUnreadCategory,
+  slugifyCategoryName,
+} from '../services/notificationService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Maps getUTCDay() (0=Sun) to PRD reminder_days values */
-const UTC_DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
 /**
  * Returns true if the user's reminder_time is within the last `windowMinutes`
@@ -270,50 +272,23 @@ router.get(
         return;
       }
 
-      // ── Find category with most unread saves ──────────────────────────────
-      const categoryUnreadCounts = await prisma.save.groupBy({
-        by: ['categoryId'],
-        where: { userId, status: 'unread', deletedAt: null },
-        _count: { id: true },
-        orderBy: { _count: { id: 'desc' } },
-        take: 1,
-      });
-
-      const topEntry = categoryUnreadCounts[0];
-
-      if (!topEntry || topEntry._count.id === 0) {
+      // ── Category with most unread saves (shared with the daily cron) ──────
+      const top = await getTopUnreadCategory(userId);
+      if (!top) {
         res.json({ showInAppToast: false });
         return;
       }
 
-      const categoryId = topEntry.categoryId;
-      const unreadCount = topEntry._count.id;
-
-      // ── Resolve category display info ─────────────────────────────────────
-      let categoryName = 'Other';
-      let categoryEmoji = '📌';
-
-      if (categoryId !== null) {
-        const cat = await prisma.category.findUnique({
-          where: { id: categoryId },
-          select: { name: true, emoji: true },
-        });
-        if (cat) {
-          categoryName = cat.name;
-          categoryEmoji = cat.emoji;
-        }
-      }
-
-      const categorySlug = categoryName.toLowerCase().replace(/\s+/g, '-');
+      const categorySlug = slugifyCategoryName(top.name);
 
       res.json({
         showInAppToast: true,
-        category: categoryName,
+        category: top.name,
         category_slug: categorySlug,
-        emoji: categoryEmoji,
-        unread_count: unreadCount,
+        emoji: top.emoji,
+        unread_count: top.unreadCount,
         /** "Your Business picks are ready 💼" — app renders this as the toast title */
-        message: `Your ${categoryName} picks are ready ${categoryEmoji}`,
+        message: `Your ${top.name} picks are ready ${top.emoji}`,
         deep_link: `oshi://library/${categorySlug}`,
       });
     } catch (err) {

@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/auth';
 import { Errors } from '../middleware/errorHandler';
 import { prisma } from '../lib/prisma';
 import { invalidateSmartSortCache } from '../services/smartSortService';
+import { slugifyCategoryName } from '../services/notificationService';
 import type { Prisma } from '@prisma/client';
 
 const router = Router();
@@ -46,15 +47,19 @@ function formatCategory(
   return {
     id: cat.id,
     name: cat.name,
+    // Deep-link slug (oshi://library/:categorySlug, PRD §4) — same formula
+    // the reminder notifications use.
+    slug: slugifyCategoryName(cat.name),
     emoji: cat.emoji,
     sort_order: cat.sortOrder,
     is_system_default: cat.isSystemDefault,
     unread_count: counts.unread,
     total_count: counts.total,
     created_at: cat.createdAt.toISOString(),
+    // Omit when null (API contract §1) — was previously emitted in both branches
     ...(cat.reminderOverrideTime !== null
       ? { reminder_override_time: cat.reminderOverrideTime }
-      : { reminder_override_time: null }),
+      : {}),
   };
 }
 
@@ -240,7 +245,15 @@ router.patch(
       // Category name/emoji changes affect smart sort display — invalidate cache
       await invalidateSmartSortCache(userId, categoryId);
 
-      res.json(formatCategory(updated, { unread: 0, total: 0 }));
+      // Real counts — previously hardcoded to 0 even for populated categories
+      const [total, unread] = await Promise.all([
+        prisma.save.count({ where: { userId, categoryId, deletedAt: null } }),
+        prisma.save.count({
+          where: { userId, categoryId, status: 'unread', deletedAt: null },
+        }),
+      ]);
+
+      res.json(formatCategory(updated, { unread, total }));
     } catch (err) {
       next(err);
     }

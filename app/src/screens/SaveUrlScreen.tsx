@@ -33,6 +33,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { apiClient } from '../services/apiClient';
 import type { MainStackParamList } from '../navigation/types';
 import { useSavesStore } from '../store/savesStore';
+import { isValidHttpUrl } from '../utils/url';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -47,14 +48,7 @@ type SaveState = 'idle' | 'saving' | 'success' | 'error';
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isValidUrl(text: string): boolean {
-  try {
-    const url = new URL(text.trim());
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
+// URL validation shared via utils/url (previously an inline copy here).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -118,7 +112,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
       return;
     }
 
-    if (!isValidUrl(trimmed)) {
+    if (!isValidHttpUrl(trimmed)) {
       setErrorMsg('That doesn\'t look like a valid URL. Make sure it starts with http:// or https://');
       playShake();
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);

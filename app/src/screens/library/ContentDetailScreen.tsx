@@ -48,7 +48,8 @@ import { useTheme } from '../../theme/ThemeContext';
 import { apiClient } from '../../services/apiClient';
 import { useSavesStore } from '../../store/savesStore';
 import analytics from '../../services/analytics';
-import type { SaveData, Platform_ } from '../../components/OshiCard';
+import type { SaveData } from '../../components/OshiCard';
+import { getPlatformMeta } from '../../constants/platforms';
 import type { MainStackParamList } from '../../navigation/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,16 +59,7 @@ import type { MainStackParamList } from '../../navigation/types';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const THUMB_HEIGHT = Math.round(SCREEN_WIDTH * (9 / 16));
 
-const PLATFORM_META: Record<Platform_, { label: string; icon: string; gradient: [string, string] }> = {
-  instagram: { label: 'Instagram', icon: '📷', gradient: ['#833AB4', '#FD1D1D'] },
-  youtube:   { label: 'YouTube',   icon: '▶️',  gradient: ['#FF0000', '#CC0000'] },
-  tiktok:    { label: 'TikTok',    icon: '🎵',  gradient: ['#010101', '#69C9D0'] },
-  web:       { label: 'Web',       icon: '🌐',  gradient: ['#1A1A2E', '#16213E'] },
-  twitter:   { label: 'X',         icon: '𝕏',   gradient: ['#14171A', '#657786'] },
-  linkedin:  { label: 'LinkedIn',  icon: '💼',  gradient: ['#0077B5', '#005885'] },
-  spotify:   { label: 'Spotify',   icon: '🎧',  gradient: ['#1DB954', '#191414'] },
-  other:     { label: 'Link',      icon: '🔗',  gradient: ['#1A1A2E', '#666666'] },
-};
+// Platform metadata comes from constants/platforms (shared with OshiCard).
 
 const CONTENT_TYPE_LABELS: Record<string, string> = {
   short_video: 'Short Video',
@@ -296,7 +288,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const handleOpenInPlatform = useCallback(() => {
     if (!save) return;
     if (save.link_status !== 'active') {
-      const plat = PLATFORM_META[save.platform].label;
+      const plat = getPlatformMeta(save.platform).label;
       Alert.alert(
         save.link_status === 'private'
           ? 'Content is Private'
@@ -384,7 +376,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
     );
   }
 
-  const platMeta = PLATFORM_META[save.platform];
+  const platMeta = getPlatformMeta(save.platform);
   const timeStr = formatTime(save.estimated_time_seconds, save.content_type);
   const relDate = formatRelativeTime(save.saved_at);
   const ctaLabel = `Open in ${platMeta.label}`;

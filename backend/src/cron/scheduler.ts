@@ -1,14 +1,11 @@
 import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
-import { sendDailyReminder } from '../services/notificationService';
+import {
+  sendDailyReminder,
+  getTopUnreadCategory,
+  UTC_DAY_NAMES,
+} from '../services/notificationService';
 import { Sentry } from '../services/sentry';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Day-of-week constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Maps Date.prototype.getUTCDay() (0=Sun) to PRD reminder_days values. */
-const UTC_DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level task handles — used by stopSchedulers()
@@ -85,37 +82,13 @@ async function processUserReminder(
   userId: string,
   token: string,
 ): Promise<void> {
-  // ── Find category with most unread saves ──────────────────────────────────
-  const categoryUnreadCounts = await prisma.save.groupBy({
-    by: ['categoryId'],
-    where: { userId, status: 'unread', deletedAt: null },
-    _count: { id: true },
-    orderBy: { _count: { id: 'desc' } },
-    take: 1,
-  });
-
-  const topEntry = categoryUnreadCounts[0];
+  // ── Category with most unread saves (shared with the in-app route) ────────
+  const top = await getTopUnreadCategory(userId);
 
   // No unread saves at all — skip silently
-  if (!topEntry || topEntry._count.id === 0) return;
+  if (!top) return;
 
-  const categoryId = topEntry.categoryId;
-  const unreadCount = topEntry._count.id;
-
-  // ── Resolve category display info ─────────────────────────────────────────
-  let categoryName = 'Other';
-  let categoryEmoji = '📌';
-
-  if (categoryId !== null) {
-    const cat = await prisma.category.findUnique({
-      where: { id: categoryId },
-      select: { name: true, emoji: true },
-    });
-    if (cat) {
-      categoryName = cat.name;
-      categoryEmoji = cat.emoji;
-    }
-  }
+  const { categoryId, unreadCount, name: categoryName, emoji: categoryEmoji } = top;
 
   // ── Get most recently saved item in that category ─────────────────────────
   const recentSave = await prisma.save.findFirst({

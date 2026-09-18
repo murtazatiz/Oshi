@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { ContentMetadata } from './metadataService';
+import { DEFAULT_CATEGORY_NAMES } from '../constants/defaultCategories';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OpenAI GPT-4o-mini Integration — PRD §3.2.1
@@ -36,12 +37,10 @@ export interface AiClassification {
  * Falls back to the PRD defaults if no categories are provided.
  */
 function buildSystemPrompt(categoryNames: string[]): string {
-  const DEFAULT_CATEGORIES = [
-    'Learning', 'Business', 'Travel', 'Food', 'Fitness',
-    'Entertainment', 'Shopping', 'Inspiration', 'Tech', 'People', 'Other',
+  // Copy before mutating — never push into the caller's array
+  const cats = [
+    ...(categoryNames.length > 0 ? categoryNames : DEFAULT_CATEGORY_NAMES),
   ];
-
-  const cats = categoryNames.length > 0 ? categoryNames : DEFAULT_CATEGORIES;
   // Always include "Other" as a fallback option
   if (!cats.some((c) => c.toLowerCase() === 'other')) {
     cats.push('Other');

@@ -36,12 +36,10 @@ export interface SubscriptionState {
   /** When non-null, the milestone celebration modal should display */
   activeMilestone: number | null;
 
-  /** §3.7.4 — show persistent soft banner for downgraded users */
-  showDowngradeBanner: boolean;
-  /** §3.4.3 — trial_expiry_banner_due from GET /users/me */
-  showTrialExpiryBanner: boolean;
-  /** Dismissible once per session */
-  downgradeBannerDismissed: boolean;
+  // NOTE: trial-expiry banner state lives in savesStore
+  // (trialExpiryBannerDue/trialBannerDismissed, rendered by HomeScreen).
+  // A duplicate copy here — plus never-rendered downgrade-banner flags
+  // (PRD §3.7.4, unimplemented) — was removed 2026-09-18.
 }
 
 interface SubscriptionActions {
@@ -63,14 +61,8 @@ interface SubscriptionActions {
   /** Clear the active milestone after celebration animation */
   clearMilestone: () => void;
 
-  /** Set flags from GET /users/me response */
-  setServerFlags: (flags: {
-    subscriptionStatus: string;
-    trialExpiryBannerDue?: boolean;
-  }) => void;
-
-  dismissDowngradeBanner: () => void;
-  dismissTrialExpiryBanner: () => void;
+  /** Set entitlement flags from GET /users/me response */
+  setServerFlags: (flags: { subscriptionStatus: string }) => void;
 }
 
 export const useSubscriptionStore = create<SubscriptionState & SubscriptionActions>(
@@ -82,9 +74,6 @@ export const useSubscriptionStore = create<SubscriptionState & SubscriptionActio
     error: null,
     streakCount: 0,
     activeMilestone: null,
-    showDowngradeBanner: false,
-    showTrialExpiryBanner: false,
-    downgradeBannerDismissed: false,
 
     refresh: async () => {
       set({ isLoading: true, error: null });
@@ -145,21 +134,10 @@ export const useSubscriptionStore = create<SubscriptionState & SubscriptionActio
 
     clearMilestone: () => set({ activeMilestone: null }),
 
-    setServerFlags: ({ subscriptionStatus, trialExpiryBannerDue }) => {
+    setServerFlags: ({ subscriptionStatus }) => {
       const isPro = subscriptionStatus === 'pro';
       const isTrial = subscriptionStatus === 'trial';
-      const isFreeOrCancelled =
-        subscriptionStatus === 'free' || subscriptionStatus === 'cancelled';
-
-      set({
-        isPro: isPro || isTrial,
-        isTrial,
-        showDowngradeBanner: isFreeOrCancelled,
-        showTrialExpiryBanner: trialExpiryBannerDue === true,
-      });
+      set({ isPro: isPro || isTrial, isTrial });
     },
-
-    dismissDowngradeBanner: () => set({ downgradeBannerDismissed: true }),
-    dismissTrialExpiryBanner: () => set({ showTrialExpiryBanner: false }),
   }),
 );

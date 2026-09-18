@@ -32,34 +32,15 @@ import { apiClient } from '../services/apiClient';
 import { enqueue } from '../services/offlineQueue';
 import { useSavesStore } from '../store/savesStore';
 import type { SaveData } from '../components/OshiCard';
+import { detectPlatformFromUrl, getPlatformMeta } from '../constants/platforms';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform detection
 // ─────────────────────────────────────────────────────────────────────────────
 
-function detectSourceApp(url: string): string {
-  const lower = url.toLowerCase();
-  if (lower.includes('instagram.com')) return 'instagram';
-  if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'youtube';
-  if (lower.includes('tiktok.com')) return 'tiktok';
-  if (lower.includes('twitter.com') || lower.includes('x.com')) return 'twitter';
-  if (lower.includes('linkedin.com')) return 'linkedin';
-  if (lower.includes('spotify.com')) return 'spotify';
-  return 'web';
-}
-
-function platformLabel(source: string): string {
-  const labels: Record<string, string> = {
-    instagram: 'Instagram',
-    youtube: 'YouTube',
-    tiktok: 'TikTok',
-    twitter: 'X (Twitter)',
-    linkedin: 'LinkedIn',
-    spotify: 'Spotify',
-    web: 'Web',
-  };
-  return labels[source] ?? 'Link';
-}
+// Platform detection + labels come from constants/platforms (shared with
+// OshiCard and ContentDetailScreen; previously a third diverged copy here
+// that was missing facebook).
 
 function platformLimitedNote(source: string): string | null {
   if (source === 'instagram') return 'Instagram preview may be limited';
@@ -221,7 +202,7 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
     if (!resolvedUrl || hasSavedRef.current) return;
     hasSavedRef.current = true;
 
-    const sourceApp = detectSourceApp(resolvedUrl);
+    const sourceApp = detectPlatformFromUrl(resolvedUrl);
 
     async function save(): Promise<void> {
       const netState = await NetInfo.fetch();
@@ -300,8 +281,8 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
 
   if (!hasShareIntent || !resolvedUrl) return null;
 
-  const sourceApp = detectSourceApp(resolvedUrl);
-  const label = platformLabel(sourceApp);
+  const sourceApp = detectPlatformFromUrl(resolvedUrl);
+  const label = getPlatformMeta(sourceApp).label;
   const limitedNote = platformLimitedNote(sourceApp);
 
   // ── Render ────────────────────────────────────────────────────────────

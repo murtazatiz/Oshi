@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import {
   createNavigationContainerRef,
   NavigationContainer,
@@ -9,11 +9,10 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Session } from '@supabase/supabase-js';
 
-import { supabase } from '../lib/supabase';
 import { theme } from '../theme';
 import { useOnboardingStore } from '../store/onboardingStore';
+import { useAuthStore } from '../store/authStore';
 
 import type {
   AuthStackParamList,
@@ -136,46 +135,6 @@ const linking: LinkingOptions<RootStackParamList> = {
     return defaultGetState(path, options);
   },
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Auth state hook
-// PRD §3.5.3: call supabase.auth.getSession() on app open.
-// On 401: one silent refresh → if failed, clear session and redirect to Login.
-// Session is persisted in SecureStore via the adapter in src/lib/supabase.ts.
-// ─────────────────────────────────────────────────────────────────────────────
-function useAuthSession(): { session: Session | null; isLoading: boolean } {
-  const [session, setSession] = useState<Session | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    // Restore session from SecureStore on mount
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        setSession(data.session);
-      })
-      .catch(() => {
-        setSession(null);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
-
-    // Keep session in sync with Supabase auth events (sign in, sign out,
-    // token refresh, password recovery, etc.)
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, updatedSession) => {
-      setSession(updatedSession);
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  return { session, isLoading };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth Stack navigator
@@ -324,14 +283,7 @@ function TabIcon({
 }): React.JSX.Element {
   return (
     <View style={styles.tabIconContainer}>
-      {/* eslint-disable-next-line react-native/no-inline-styles */}
-      <React.Fragment>
-        {React.createElement(
-          require('react-native').Text,
-          { style: { fontSize: size, color } },
-          symbol,
-        )}
-      </React.Fragment>
+      <Text style={{ fontSize: size, color }}>{symbol}</Text>
     </View>
   );
 }
@@ -395,7 +347,13 @@ function MainNavigator(): React.JSX.Element {
 // until markComplete() is called at the end of step 9.
 // ─────────────────────────────────────────────────────────────────────────────
 function RootNavigator(): React.JSX.Element {
-  const { session, isLoading: sessionLoading } = useAuthSession();
+  // Session state comes from authStore — App.tsx's AuthInitialiser calls
+  // initialise() on mount (getSession + onAuthStateChange). This navigator
+  // previously ran its own parallel getSession/listener pair, giving the app
+  // two competing sources of session truth.
+  const session = useAuthStore((s) => s.session);
+  const isInitialised = useAuthStore((s) => s.isInitialised);
+  const sessionLoading = !isInitialised;
 
   const isOnboardingComplete = useOnboardingStore((s) => s.isComplete);
   const isOnboardingLoaded = useOnboardingStore((s) => s.isLoaded);

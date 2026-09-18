@@ -582,6 +582,47 @@ router.delete(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /saves/:id/restore — undo a soft delete
+//
+// Clears deleted_at on a save the user soft-deleted (the undo toast's
+// "deleted" path). Status and done/skipped timestamps were untouched by the
+// delete, so clearing the flag restores the save exactly as it was.
+// A PATCH cannot do this — every other route (correctly) filters
+// deletedAt: null, which is why undo-after-delete used to 404.
+// 404 when the save doesn't exist, isn't deleted, or was already purged.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post(
+  '/:id/restore',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const saveId = req.params['id'] as string;
+
+      const deleted = await prisma.save.findFirst({
+        where: { id: saveId, userId: req.userId, deletedAt: { not: null } },
+        select: { id: true, categoryId: true },
+      });
+      if (!deleted) {
+        next(Errors.notFound('Save'));
+        return;
+      }
+
+      const restored = await prisma.save.update({
+        where: { id: saveId },
+        data: { deletedAt: null },
+        select: saveSelect,
+      });
+
+      // Restoring re-adds the save to rankings — same contract as DELETE
+      await invalidateSmartSortCache(req.userId, deleted.categoryId);
+
+      res.json(formatSave(restored));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /saves/:id/retry — re-queue a failed AI processing job
 //
 // Only saves with processing_status='failed' are eligible (PRD §3.3.3).

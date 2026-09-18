@@ -57,58 +57,33 @@ const TRIAL_WARNING_OFFSET_MS = 24 * 60 * 60 * 1000;
 // always returns 200 to prevent RevenueCat from retrying for server errors.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function handleInitialPurchase(userId: string, event: RevenueCatEvent): Promise<void> {
-  const expiresAt = event.expiration_at_ms
+/**
+ * The one place a RevenueCat event becomes a subscription status write.
+ * Six of the eight webhook events differ only in the status they set
+ * (and previously had six copy-pasted handlers):
+ *   'pro'       — INITIAL_PURCHASE, RENEWAL, TRIAL_CONVERTED, PRODUCT_CHANGE
+ *   'cancelled' — CANCELLATION, TRIAL_CANCELLED (PRD §3.7.4: user keeps
+ *                 access until expires_at; EXPIRATION later sets 'free')
+ *   'free'      — EXPIRATION (expires_at cleared)
+ */
+async function setSubscriptionStatus(
+  userId: string,
+  status: 'pro' | 'cancelled' | 'free',
+  event?: RevenueCatEvent,
+): Promise<void> {
+  const expiresAt = event?.expiration_at_ms
     ? new Date(event.expiration_at_ms)
     : null;
 
   await prisma.user.update({
     where: { id: userId },
     data: {
-      subscriptionStatus: 'pro',
-      ...(expiresAt ? { subscriptionExpiresAt: expiresAt } : {}),
-    },
-  });
-}
-
-async function handleRenewal(userId: string, event: RevenueCatEvent): Promise<void> {
-  const expiresAt = event.expiration_at_ms
-    ? new Date(event.expiration_at_ms)
-    : null;
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      subscriptionStatus: 'pro',
-      ...(expiresAt ? { subscriptionExpiresAt: expiresAt } : {}),
-    },
-  });
-}
-
-async function handleCancellation(userId: string, event: RevenueCatEvent): Promise<void> {
-  // PRD §3.7.4: "Status stays 'pro' until expires_at. Set cancelled flag."
-  // 'cancelled' is the status flag — user retains Pro access until expires_at.
-  // EXPIRATION event will set status → 'free' when the billing period ends.
-  const expiresAt = event.expiration_at_ms
-    ? new Date(event.expiration_at_ms)
-    : null;
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      subscriptionStatus: 'cancelled',
-      ...(expiresAt ? { subscriptionExpiresAt: expiresAt } : {}),
-    },
-  });
-}
-
-async function handleExpiration(userId: string): Promise<void> {
-  // Trial or subscription has expired — downgrade to free tier (PRD §3.7.4)
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      subscriptionStatus: 'free',
-      subscriptionExpiresAt: null,
+      subscriptionStatus: status,
+      ...(status === 'free'
+        ? { subscriptionExpiresAt: null }
+        : expiresAt
+          ? { subscriptionExpiresAt: expiresAt }
+          : {}),
     },
   });
 }
@@ -160,51 +135,6 @@ async function handleTrialStarted(userId: string, event: RevenueCatEvent): Promi
     { userId, notificationType: 'trial_expiry_day', expiresAt: expiresAtIso },
     expiresAtMs,
   );
-}
-
-async function handleTrialConverted(userId: string, event: RevenueCatEvent): Promise<void> {
-  const expiresAt = event.expiration_at_ms
-    ? new Date(event.expiration_at_ms)
-    : null;
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      subscriptionStatus: 'pro',
-      ...(expiresAt ? { subscriptionExpiresAt: expiresAt } : {}),
-    },
-  });
-}
-
-async function handleTrialCancelled(userId: string, event: RevenueCatEvent): Promise<void> {
-  // User cancelled during trial — they retain trial access until expiration_at_ms.
-  // RevenueCat sends EXPIRATION when it actually ends; we wait for that to set 'free'.
-  // For now, mark as 'cancelled' so the UI can show a "resubscribe" prompt.
-  const expiresAt = event.expiration_at_ms
-    ? new Date(event.expiration_at_ms)
-    : null;
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      subscriptionStatus: 'cancelled',
-      ...(expiresAt ? { subscriptionExpiresAt: expiresAt } : {}),
-    },
-  });
-}
-
-async function handleProductChange(userId: string, event: RevenueCatEvent): Promise<void> {
-  const expiresAt = event.expiration_at_ms
-    ? new Date(event.expiration_at_ms)
-    : null;
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      subscriptionStatus: 'pro',
-      ...(expiresAt ? { subscriptionExpiresAt: expiresAt } : {}),
-    },
-  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,19 +207,19 @@ router.post(
     try {
       switch (eventType) {
         case 'INITIAL_PURCHASE':
-          await handleInitialPurchase(userId, event);
+          await setSubscriptionStatus(userId, 'pro', event);
           break;
 
         case 'RENEWAL':
-          await handleRenewal(userId, event);
+          await setSubscriptionStatus(userId, 'pro', event);
           break;
 
         case 'CANCELLATION':
-          await handleCancellation(userId, event);
+          await setSubscriptionStatus(userId, 'cancelled', event);
           break;
 
         case 'EXPIRATION':
-          await handleExpiration(userId);
+          await setSubscriptionStatus(userId, 'free');
           break;
 
         case 'TRIAL_STARTED':
@@ -297,15 +227,15 @@ router.post(
           break;
 
         case 'TRIAL_CONVERTED':
-          await handleTrialConverted(userId, event);
+          await setSubscriptionStatus(userId, 'pro', event);
           break;
 
         case 'TRIAL_CANCELLED':
-          await handleTrialCancelled(userId, event);
+          await setSubscriptionStatus(userId, 'cancelled', event);
           break;
 
         case 'PRODUCT_CHANGE':
-          await handleProductChange(userId, event);
+          await setSubscriptionStatus(userId, 'pro', event);
           break;
 
         default:

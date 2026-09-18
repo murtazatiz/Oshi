@@ -36,6 +36,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { apiClient } from '../services/apiClient';
 import { useSavesStore } from '../store/savesStore';
 import type { MainStackParamList } from '../navigation/types';
+import { isValidHttpUrl } from '../utils/url';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -63,13 +64,8 @@ function extractUrls(text: string): string[] {
   const unique = new Set<string>();
   for (const line of lines) {
     const trimmed = line.trim();
-    try {
-      const u = new URL(trimmed);
-      if (u.protocol === 'http:' || u.protocol === 'https:') {
-        unique.add(trimmed);
-      }
-    } catch {
-      // not a valid URL
+    if (isValidHttpUrl(trimmed)) {
+      unique.add(trimmed);
     }
   }
   return [...unique];
@@ -84,13 +80,8 @@ function parseBookmarkHtml(html: string): BookmarkItem[] {
   while ((match = linkRegex.exec(html)) !== null) {
     const url = match[1]?.trim() ?? '';
     const title = match[2]?.trim() ?? '';
-    try {
-      const u = new URL(url);
-      if (u.protocol === 'http:' || u.protocol === 'https:') {
-        items.push({ id: String(id++), title: title || url, url, selected: true });
-      }
-    } catch {
-      // skip invalid
+    if (isValidHttpUrl(url)) {
+      items.push({ id: String(id++), title: title || url, url, selected: true });
     }
   }
   return items;

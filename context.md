@@ -469,10 +469,12 @@ Per cursor rules: JWT/session stored in Expo SecureStore. Zustand persist only f
 | POST | `/auth/signup` | Create account + 11 default categories + trial |
 | POST | `/auth/signin` | Sign in |
 | POST | `/auth/reset-password` | Send reset email |
+| POST | `/auth/update-password` | Set new password with reset token |
 | GET | `/saves` | List saves (sort, search, cursor pagination; app uses limit=500) |
 | POST | `/saves` | Create save (returns `{ duplicate: true }` if URL exists) |
 | PATCH | `/saves/:id` | Update status, category, note, manual sort order |
 | DELETE | `/saves/:id` | Soft delete |
+| POST | `/saves/:id/restore` | Undo a soft delete (added 2026-09-18) |
 | GET | `/categories` | List categories with unread/total counts |
 | POST | `/categories` | Create category (free: max 3) |
 | DELETE | `/categories/:id` | Delete category (moves saves to Other) |

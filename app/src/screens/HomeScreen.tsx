@@ -37,7 +37,7 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ParamListBase } from '@react-navigation/native';
 
@@ -64,7 +64,7 @@ import { OshiEmptyState } from '../components/OshiEmptyState';
 import { CategoryTabs } from '../components/CategoryTabs';
 import { SortPicker } from '../components/SortPicker';
 import { UndoToast } from '../components/UndoToast';
-import type { MainStackParamList } from '../navigation/types';
+import type { LibraryStackParamList, MainStackParamList } from '../navigation/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -425,6 +425,7 @@ function NotificationReaskModal({
 
 export default function HomeScreen(): React.JSX.Element {
   const navigation = useNavigation<NavProp>();
+  const route = useRoute<RouteProp<LibraryStackParamList, 'LibraryHome'>>();
   const { colors, theme } = useTheme();
   const { spacing, borderRadius } = theme;
   const userId = useAuthStore((s) => s.user?.id);
@@ -582,6 +583,23 @@ export default function HomeScreen(): React.JSX.Element {
     subscribeToSaveUpdates();
     return () => unsubscribeFromSaveUpdates();
   }, [userId]);
+
+  // ── Deep link: oshi://library/:categorySlug (PRD §4) ──────────────────────
+  // Reminder pushes deep-link to a category; select the matching tab once
+  // categories are loaded. Slug formula mirrors the backend's
+  // slugifyCategoryName (lowercase, hyphens for spaces).
+
+  useEffect(() => {
+    const slug = route.params?.categorySlug;
+    if (!slug || categories.length === 0) return;
+    const target = categories.find(
+      (c) => c.name.toLowerCase().replace(/\s+/g, '-') === slug.toLowerCase(),
+    );
+    if (target && target.id !== activeCategoryId) {
+      setActiveCategory(target.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.categorySlug, categories]);
 
   // ── Search — client-side filter, no API call ─────────────────────────────
 

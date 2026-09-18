@@ -12,6 +12,68 @@ import { prisma } from '../lib/prisma';
 const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared reminder helpers — this module owns the "which category do we nudge
+// about" semantics. The daily-reminder cron and the in-app reminder route
+// previously each carried their own copy of the day-name table, the slug
+// formula, and the top-unread-category query.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Day names as stored in users.reminder_days, indexed by Date#getUTCDay(). */
+export const UTC_DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+/** category_slug per PRD §4: lowercase, hyphens replacing spaces. */
+export function slugifyCategoryName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, '-');
+}
+
+export interface TopUnreadCategory {
+  categoryId: string | null;
+  name: string;
+  emoji: string;
+  unreadCount: number;
+}
+
+/**
+ * The category with the most unread saves for a user, with display info
+ * resolved ("Other"/📌 when the top saves are uncategorised).
+ * Returns null when the user has no unread saves at all.
+ */
+export async function getTopUnreadCategory(
+  userId: string,
+): Promise<TopUnreadCategory | null> {
+  const categoryUnreadCounts = await prisma.save.groupBy({
+    by: ['categoryId'],
+    where: { userId, status: 'unread', deletedAt: null },
+    _count: { id: true },
+    orderBy: { _count: { id: 'desc' } },
+    take: 1,
+  });
+
+  const topEntry = categoryUnreadCounts[0];
+  if (!topEntry || topEntry._count.id === 0) return null;
+
+  let name = 'Other';
+  let emoji = '📌';
+  if (topEntry.categoryId !== null) {
+    const cat = await prisma.category.findUnique({
+      where: { id: topEntry.categoryId },
+      select: { name: true, emoji: true },
+    });
+    if (cat) {
+      name = cat.name;
+      emoji = cat.emoji;
+    }
+  }
+
+  return {
+    categoryId: topEntry.categoryId,
+    name,
+    emoji,
+    unreadCount: topEntry._count.id,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -178,8 +240,7 @@ export async function sendDailyReminder(opts: {
       ? `${topSaveTitle} — and ${othersCount} more ${categoryName} save${othersCount === 1 ? '' : 's'}.`
       : topSaveTitle;
 
-  // category_slug: lowercase, hyphens replacing spaces
-  const categorySlug = categoryName.toLowerCase().replace(/\s+/g, '-');
+  const categorySlug = slugifyCategoryName(categoryName);
 
   // Build push payload — only include thumbnailUrl when it's a non-null string
   // (exactOptionalPropertyTypes: optional properties cannot be set to undefined)

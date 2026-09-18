@@ -31,6 +31,11 @@ POST /auth/reset-password
 Request: { email }
 Response 200: { message: 'Reset email sent' }
 Always returns 200 even if email not found (security: don't reveal whether email exists).
+POST /auth/update-password
+Request: { token, new_password }   — token from the oshi://auth/reset?token= deep link.
+Response 200: { message: 'Password updated successfully. Please sign in with your new password.' }
+Errors: 422 VALIDATION_ERROR when the token is invalid or expired.
+(Added 2026-09-18: this endpoint existed in the flow but was undocumented; the backend previously served the email step at /auth/forgot-password and the token step at /auth/reset-password, contradicting this contract — both now conform.)
 3. Saves Endpoints
 POST /saves
 Request:
@@ -58,6 +63,9 @@ Setting status to 'done' automatically sets done_at = NOW(). Setting to 'skipped
 DELETE /saves/:id
 Response 204: No Content.
 Soft delete: sets saves.deleted_at = NOW(). Record excluded from all GET queries. Purged after 7 days by cron.
+POST /saves/:id/restore
+Response 200: full restored save object.
+Clears deleted_at on a soft-deleted save (the undo path). Status and done/skipped timestamps are untouched by delete, so the save comes back exactly as it was. 404 if the save is not deleted, not owned, or already purged. (Added 2026-09-18 — undo-after-delete previously had no working server path, since PATCH filters deleted rows.)
 4. Categories Endpoints
 GET /categories
 Response 200:

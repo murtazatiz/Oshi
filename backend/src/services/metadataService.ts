@@ -288,27 +288,20 @@ async function fetchRestrictedPlatform(
 // ─────────────────────────────────────────────────────────────────────────────
 // LinkedIn / Facebook — OG with browser-like headers + platform fallback thumbnail
 // ─────────────────────────────────────────────────────────────────────────────
-async function fetchLinkedIn(url: string): Promise<ContentMetadata> {
+/**
+ * LinkedIn and Facebook block the plain bot User-Agent; both use the same
+ * browser-like OG fetch and differ only in platform tag + fallback thumbnail.
+ */
+async function fetchWithBrowserHeaders(
+  url: string,
+  platform: 'linkedin' | 'facebook',
+  fallbackThumb: string,
+): Promise<ContentMetadata> {
   const result = await fetchOpenGraph(url, { browserLikeHeaders: true });
   const ogImage = result?.og.image?.trim();
-  const thumbnailUrl = ogImage || LINKEDIN_FALLBACK_THUMB;
+  const thumbnailUrl = ogImage || fallbackThumb;
   return {
-    platform: 'linkedin',
-    title: result?.og.title ?? '',
-    description: result?.og.description ?? '',
-    thumbnailUrl: thumbnailUrl || undefined,
-    textSnippet: result ? extractBodyText(result.html, 500) : '',
-    channelOrAuthor: result?.og.siteName ?? '',
-    durationSeconds: 0,
-  };
-}
-
-async function fetchFacebook(url: string): Promise<ContentMetadata> {
-  const result = await fetchOpenGraph(url, { browserLikeHeaders: true });
-  const ogImage = result?.og.image?.trim();
-  const thumbnailUrl = ogImage || FACEBOOK_FALLBACK_THUMB;
-  return {
-    platform: 'facebook',
+    platform,
     title: result?.og.title ?? '',
     description: result?.og.description ?? '',
     thumbnailUrl: thumbnailUrl || undefined,
@@ -368,10 +361,10 @@ export async function fetchContentMetadata(
       return fetchSpotifyEmbed(url);
 
     case 'linkedin':
-      return fetchLinkedIn(url);
+      return fetchWithBrowserHeaders(url, 'linkedin', LINKEDIN_FALLBACK_THUMB);
 
     case 'facebook':
-      return fetchFacebook(url);
+      return fetchWithBrowserHeaders(url, 'facebook', FACEBOOK_FALLBACK_THUMB);
 
     case 'web':
     case 'other':

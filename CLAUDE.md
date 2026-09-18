@@ -215,7 +215,7 @@ colours/sizes. Light/dark is provided via `ThemeContext`.
 - **auth**: `POST /auth/signup`, `/signin`, `/reset-password`, + 2 more
 - **saves**: `GET /saves`, `GET /saves/check-duplicate` (registered before `/:id`),
   `GET /saves/:id`, `POST /saves`, `PATCH /saves/:id`, `DELETE /saves/:id`,
-  `POST /saves/:id/retry`
+  `POST /saves/:id/restore` (undo a soft delete), `POST /saves/:id/retry`
 - **categories**: `GET`, `POST`, `PATCH /:id`, `DELETE /:id` (deletes move saves to "Other")
 - **engagement**: `POST /engagement/signal` (feeds the AI smart-sort)
 - **users**: `GET /users/me`, `PATCH /users/me`, `POST /users/avatar`, `DELETE /users/me`
@@ -277,8 +277,9 @@ existing code**, not the rule, when they conflict:
 - Rules say "Expo SDK 51 / React Navigation v6". Code uses **Expo SDK 54 / RN
   0.81 / React Navigation v7**.
 - Rules mandate "Reanimated 2 for animations" — Reanimated is **not** a
-  dependency; animations use `react-native-confetti-cannon` /
-  `react-native-draggable-flatlist` / core APIs.
+  dependency; animations use `react-native-confetti-cannon` / core APIs.
+  (`react-native-draggable-flatlist` was removed 2026-09-18 — zero imports,
+  and its required Reanimated peer was never installed.)
 - Rules say "use `interface`, never `type`" and "no `console.log`" — the codebase
   uses some `type` aliases and leaves `console.log`/`console.info` in stores,
   workers, and cron (used for diagnostics). Don't add gratuitous logs, but this

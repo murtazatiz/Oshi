@@ -454,7 +454,9 @@ export const useSavesStore = create<SavesStore>((set, get) => {
         undoEntry: null,
       }));
       try {
-        await apiClient.patch(`/saves/${undoEntry.id}`, { status: undoEntry.previousStatus });
+        // PATCH can't touch soft-deleted rows (routes filter deletedAt: null) —
+        // the dedicated restore endpoint clears the delete flag instead.
+        await apiClient.post(`/saves/${undoEntry.id}/restore`);
       } catch {
         set((s) => withDerivedSaves(s, s.allSaves.filter((sv) => sv.id !== undoEntry.id)));
       }

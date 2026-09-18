@@ -374,7 +374,7 @@ function BrowserBookmarksTab({ onGoToLibrary }: BookmarksTabProps): React.JSX.El
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'text/html',
-        copyToCacheDir: true,
+        copyToCacheDirectory: true,
       });
       if (result.canceled) return;
       const asset = result.assets?.[0];

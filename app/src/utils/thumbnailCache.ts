@@ -20,7 +20,7 @@ function thumbnailPath(saveId: string): string {
 export async function getCachedThumbnailPath(saveId: string): Promise<string | null> {
   const path = thumbnailPath(saveId);
   try {
-    const info = await FileSystem.getInfoAsync(path, { size: false });
+    const info = await FileSystem.getInfoAsync(path);
     return info.exists ? path : null;
   } catch {
     return null;
@@ -35,7 +35,7 @@ export async function cacheThumbnail(saveId: string, url: string): Promise<void>
   const dir = `${FileSystem.cacheDirectory}${THUMBNAILS_DIR}`;
   const path = thumbnailPath(saveId);
   try {
-    const dirInfo = await FileSystem.getInfoAsync(dir, { size: false });
+    const dirInfo = await FileSystem.getInfoAsync(dir);
     if (!dirInfo.exists) {
       await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
     }

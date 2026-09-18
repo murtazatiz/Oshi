@@ -41,7 +41,10 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ParamListBase } from '@react-navigation/native';
 
-import { supabase } from '../services/supabase';
+import {
+  subscribeToSaveUpdates,
+  unsubscribeFromSaveUpdates,
+} from '../services/realtime';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuthStore } from '../store/authStore';
 import {
@@ -477,7 +480,6 @@ export default function HomeScreen(): React.JSX.Element {
   const [localPlatformFilter, setLocalPlatformFilter] = useState<string[]>([]);
   const [localStatusFilter, setLocalStatusFilter] = useState<string[]>([]);
   const [isHeaderRefreshing, setIsHeaderRefreshing] = useState(false);
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const refreshSpinRef = useRef<RNAnimated.CompositeAnimation | null>(null);
   const refreshRotate = useRef(new RNAnimated.Value(0)).current;
 
@@ -573,48 +575,12 @@ export default function HomeScreen(): React.JSX.Element {
   }, [notificationReaskDue]);
 
   // ── Supabase Realtime subscription (API Contract §8) ──────────────────────
+  // services/realtime.ts owns the channel and routes rows into savesStore.
 
   useEffect(() => {
     if (!userId) return;
-
-    if (channelRef.current) {
-      void supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-
-    const channel = supabase
-      .channel('saves-updates')
-      .on(
-        'postgres_changes' as 'system',
-        { event: 'UPDATE', schema: 'public', table: 'saves' } as Record<string, string>,
-        (payload: { eventType?: string; new: Partial<SaveData> & { id: string; category_id?: string } }) => {
-          const state = useSavesStore.getState();
-          const newRow = payload.new;
-          const existing = state.allSaves.find((s) => s.id === newRow.id);
-          const processingComplete = newRow.processing_status === 'complete';
-          const newCategoryId = newRow.category?.id ?? newRow.category_id;
-          const categoryChanged =
-            existing && newCategoryId !== undefined && existing.category?.id !== newCategoryId;
-
-          // Update in-memory — filter auto-re-derives visible saves
-          state.updateSave(newRow);
-
-          // Refresh category counts when processing finishes or save moves categories
-          if (processingComplete || categoryChanged) {
-            void state.fetchCategories();
-          }
-        },
-      )
-      .subscribe();
-
-    channelRef.current = channel;
-
-    return () => {
-      if (channelRef.current) {
-        void supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
+    subscribeToSaveUpdates();
+    return () => unsubscribeFromSaveUpdates();
   }, [userId]);
 
   // ── Search — client-side filter, no API call ─────────────────────────────

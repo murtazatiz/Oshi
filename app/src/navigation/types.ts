@@ -1,11 +1,15 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 
+// Param lists are `type` aliases, not `interface`s: React Navigation v7's
+// ParamListBase constraint requires an implicit index signature, which TS
+// grants to object type aliases but never to interfaces.
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth Stack
 // Screens shown when no Supabase session exists.
 // PRD §3.5.1 — onboarding flow order: Onboarding → account creation → etc.
 // ─────────────────────────────────────────────────────────────────────────────
-export interface AuthStackParamList {
+export type AuthStackParamList = {
   Onboarding: undefined;
   Login: undefined;
   Signup: undefined;
@@ -18,7 +22,7 @@ export interface AuthStackParamList {
 // Library nested stack
 // Allows deep-linking to a specific category tab via oshi://library/:categorySlug
 // ─────────────────────────────────────────────────────────────────────────────
-export interface LibraryStackParamList {
+export type LibraryStackParamList = {
   /**
    * categorySlug matches the slug format from PRD §4:
    * lowercase, hyphenated — e.g. 'business', 'travel', 'learning'
@@ -31,7 +35,7 @@ export interface LibraryStackParamList {
 // Allows deep-linking directly to sub-screens via oshi://settings/reminders
 // and oshi://settings/subscription (PRD §4)
 // ─────────────────────────────────────────────────────────────────────────────
-export interface SettingsStackParamList {
+export type SettingsStackParamList = {
   SettingsHome: undefined;
   Profile: undefined;
   /** Deep link: oshi://settings/reminders */
@@ -44,7 +48,7 @@ export interface SettingsStackParamList {
 // Main Bottom Tab Navigator
 // Three tabs: Library, Search, Settings (PRD §5.1 navigation)
 // ─────────────────────────────────────────────────────────────────────────────
-export interface MainTabParamList {
+export type MainTabParamList = {
   LibraryTab: NavigatorScreenParams<LibraryStackParamList>;
   SearchTab: undefined;
   SettingsTab: NavigatorScreenParams<SettingsStackParamList>;
@@ -54,7 +58,7 @@ export interface MainTabParamList {
 // Main Stack (tabs + modal screens)
 // ContentDetail slides up as a modal sheet over the tab bar (PRD §3.6)
 // ─────────────────────────────────────────────────────────────────────────────
-export interface MainStackParamList {
+export type MainStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList>;
   /** Deep link: oshi://save/:saveId (PRD §4) */
   ContentDetail: { saveId: string };
@@ -68,7 +72,7 @@ export interface MainStackParamList {
 // Root Stack
 // Top-level navigator — conditionally renders Auth or Main based on session.
 // ─────────────────────────────────────────────────────────────────────────────
-export interface RootStackParamList {
+export type RootStackParamList = {
   Auth: NavigatorScreenParams<AuthStackParamList>;
   Main: NavigatorScreenParams<MainStackParamList>;
 }

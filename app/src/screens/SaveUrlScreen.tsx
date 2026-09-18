@@ -183,7 +183,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
             },
           ]}
         >
-          <Text style={[styles.title, { color: colors.textPrimary, ...typography.h3 }]}>
+          <Text style={[styles.title, { color: colors.textPrimary, ...typography.heading2 }]}>
             Save a URL
           </Text>
           <TouchableOpacity
@@ -193,7 +193,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
             accessibilityRole="button"
             style={[
               styles.closeBtn,
-              { backgroundColor: colors.border, borderRadius: borderRadius.full ?? 999 },
+              { backgroundColor: colors.border, borderRadius: borderRadius.pill },
             ]}
           >
             <Text style={[styles.closeBtnText, { color: colors.textMuted }]}>✕</Text>
@@ -209,7 +209,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
               style={[styles.successContainer, { transform: [{ scale: successScale }] }]}
             >
               <Text style={styles.successEmoji}>✓</Text>
-              <Text style={[styles.successText, { color: colors.success, ...typography.h3 }]}>
+              <Text style={[styles.successText, { color: colors.success, ...typography.heading2 }]}>
                 Saved!
               </Text>
               <Text style={[styles.successSub, { color: colors.textMuted, ...typography.body }]}>

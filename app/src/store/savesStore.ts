@@ -97,6 +97,35 @@ function applyFilter(
   return result;
 }
 
+/** The filter inputs that applyFilter derives the visible list from. */
+interface FilterState {
+  activeCategoryId: string | null;
+  searchQuery: string;
+  platformFilter: string[];
+  statusFilter: string[];
+}
+
+/**
+ * Derive the { allSaves, saves } slice from a new master list, using the
+ * store's current filters unless explicitly overridden.
+ *
+ * Every mutation that touches allSaves goes through this helper so the
+ * visible `saves` list can never drift out of sync with the master list —
+ * previously each of ~20 call sites repeated the applyFilter(...) spread
+ * by hand.
+ */
+function withDerivedSaves(
+  current: FilterState,
+  allSaves: SaveData[],
+  overrides: Partial<FilterState> = {},
+): { allSaves: SaveData[]; saves: SaveData[] } {
+  const f = { ...current, ...overrides };
+  return {
+    allSaves,
+    saves: applyFilter(allSaves, f.activeCategoryId, f.searchQuery, f.platformFilter, f.statusFilter),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State & actions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,7 +211,48 @@ type SavesStore = SavesState & SavesActions;
 // Store
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const useSavesStore = create<SavesStore>((set, get) => ({
+export const useSavesStore = create<SavesStore>((set, get) => {
+  /**
+   * Shared optimistic status mutation behind markDone/markSkipped:
+   * set status locally + arm undo → PATCH + engagement signal → roll back
+   * to the previous status if the API call fails.
+   */
+  async function mutateStatus(
+    save: SaveData,
+    status: 'done' | 'skipped',
+    label: string,
+  ): Promise<void> {
+    const prev = save.status;
+    set((s) => ({
+      ...withDerivedSaves(
+        s,
+        s.allSaves.map((sv) => (sv.id === save.id ? { ...sv, status } : sv)),
+      ),
+      undoEntry: {
+        id: save.id,
+        action: status,
+        label,
+        save,
+        previousStatus: prev,
+        timestamp: Date.now(),
+      },
+    }));
+    try {
+      await apiClient.patch(`/saves/${save.id}`, { status });
+      await apiClient.post('/engagement/signal', { save_id: save.id, action: status });
+      if (status === 'done') void deleteCachedThumbnail(save.id);
+      void get().fetchCategories();
+    } catch {
+      set((s) =>
+        withDerivedSaves(
+          s,
+          s.allSaves.map((sv) => (sv.id === save.id ? { ...sv, status: prev } : sv)),
+        ),
+      );
+    }
+  }
+
+  return {
   // ── Initial state ─────────────────────────────────────────────────────────
   allSaves: [],
   saves: [],
@@ -217,30 +287,24 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   // Fetches ALL saves without a category filter. Category tabs filter client-side.
 
   async fetchSaves(opts): Promise<void> {
-    const { sortOption, activeCategoryId, searchQuery } = get();
+    const { sortOption } = get();
     const refresh = opts?.refresh ?? false;
 
     set({ isLoading: !refresh, isRefreshing: refresh });
 
     try {
-      const sort = sortOption;
-      const limit = '500';
-      console.log('[fetchSaves] Calling API with params:', { sort, limit });
       const res = await apiClient.get<{
         saves: SaveData[];
         next_cursor: string | null;
         total_count: number;
         has_more: boolean;
       }>('/saves', {
-        params: { sort, limit },
+        params: { sort: sortOption, limit: '500' },
       });
 
-      const allSaves = res.data.saves;
-      const { platformFilter, statusFilter } = get();
-      set({
-        allSaves,
-        saves: applyFilter(allSaves, activeCategoryId, searchQuery, platformFilter, statusFilter),
-      });
+      // Derive with the filters as they are NOW (post-await) — the user may
+      // have switched category/search while the request was in flight.
+      set(withDerivedSaves(get(), res.data.saves));
     } catch {
       // Network error — keep existing data
     } finally {
@@ -252,10 +316,10 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   // Only updates activeCategoryId — no API call. Visible saves re-derived immediately.
 
   setActiveCategory(categoryId): void {
-    const { allSaves, searchQuery, platformFilter, statusFilter } = get();
+    const s = get();
     set({
       activeCategoryId: categoryId,
-      saves: applyFilter(allSaves, categoryId, searchQuery, platformFilter, statusFilter),
+      ...withDerivedSaves(s, s.allSaves, { activeCategoryId: categoryId }),
     });
   },
 
@@ -263,43 +327,35 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   // Client-side filter — no API call.
 
   setSearchQuery(query): void {
-    const { allSaves, activeCategoryId, platformFilter, statusFilter } = get();
+    const s = get();
     set({
       searchQuery: query,
-      saves: applyFilter(allSaves, activeCategoryId, query, platformFilter, statusFilter),
+      ...withDerivedSaves(s, s.allSaves, { searchQuery: query }),
     });
   },
 
   setPlatformFilter(platforms): void {
-    console.log('[store] setPlatformFilter called with:', platforms, 'allSaves count:', get().allSaves.length);
-    const { allSaves, activeCategoryId, searchQuery, statusFilter } = get();
-    const nextSaves = applyFilter(allSaves, activeCategoryId, searchQuery, platforms, statusFilter);
-    console.log('[savesStore] setPlatformFilter applied', { platforms, statusFilter, allSavesCount: allSaves.length, filteredCount: nextSaves.length });
+    const s = get();
     set({
       platformFilter: platforms,
-      saves: nextSaves,
+      ...withDerivedSaves(s, s.allSaves, { platformFilter: platforms }),
     });
   },
 
   setStatusFilter(statuses): void {
-    const { allSaves, activeCategoryId, searchQuery, platformFilter } = get();
-    const nextSaves = applyFilter(allSaves, activeCategoryId, searchQuery, platformFilter, statuses);
-    console.log('[savesStore] setStatusFilter applied', { statuses, platformFilter, allSavesCount: allSaves.length, filteredCount: nextSaves.length });
+    const s = get();
     set({
       statusFilter: statuses,
-      saves: nextSaves,
+      ...withDerivedSaves(s, s.allSaves, { statusFilter: statuses }),
     });
   },
 
   clearAllFilters(): void {
-    const { allSaves, activeCategoryId } = get();
-    const emptyPlatform: string[] = [];
-    const emptyStatus: string[] = [];
+    const s = get();
+    const cleared = { searchQuery: '', platformFilter: [], statusFilter: [] };
     set({
-      searchQuery: '',
-      platformFilter: emptyPlatform,
-      statusFilter: emptyStatus,
-      saves: applyFilter(allSaves, activeCategoryId, '', emptyPlatform, emptyStatus),
+      ...cleared,
+      ...withDerivedSaves(s, s.allSaves, cleared),
     });
   },
 
@@ -337,112 +393,54 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   // ── Single-item actions ───────────────────────────────────────────────────
 
   async markDone(save): Promise<void> {
-    const prev = save.status;
-    set((s) => {
-      const allSaves = s.allSaves.map((sv) =>
-        sv.id === save.id ? { ...sv, status: 'done' as const } : sv,
-      );
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        undoEntry: {
-          id: save.id,
-          action: 'done',
-          label: 'Marked as Done',
-          save,
-          previousStatus: prev,
-          timestamp: Date.now(),
-        },
-      };
-    });
-    try {
-      await apiClient.patch(`/saves/${save.id}`, { status: 'done' });
-      await apiClient.post('/engagement/signal', { save_id: save.id, action: 'done' });
-      void deleteCachedThumbnail(save.id);
-      void get().fetchCategories();
-    } catch {
-      set((s) => {
-        const allSaves = s.allSaves.map((sv) => (sv.id === save.id ? { ...sv, status: prev } : sv));
-        return { allSaves, saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter) };
-      });
-    }
+    await mutateStatus(save, 'done', 'Marked as Done');
   },
 
   async markSkipped(save): Promise<void> {
-    const prev = save.status;
-    set((s) => {
-      const allSaves = s.allSaves.map((sv) =>
-        sv.id === save.id ? { ...sv, status: 'skipped' as const } : sv,
-      );
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        undoEntry: {
-          id: save.id,
-          action: 'skipped',
-          label: 'Skipped',
-          save,
-          previousStatus: prev,
-          timestamp: Date.now(),
-        },
-      };
-    });
-    try {
-      await apiClient.patch(`/saves/${save.id}`, { status: 'skipped' });
-      await apiClient.post('/engagement/signal', { save_id: save.id, action: 'skipped' });
-      void get().fetchCategories();
-    } catch {
-      set((s) => {
-        const allSaves = s.allSaves.map((sv) => (sv.id === save.id ? { ...sv, status: prev } : sv));
-        return { allSaves, saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter) };
-      });
-    }
+    await mutateStatus(save, 'skipped', 'Skipped');
   },
 
   async deleteSave(save): Promise<void> {
-    set((s) => {
-      const allSaves = s.allSaves.filter((sv) => sv.id !== save.id);
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        undoEntry: {
-          id: save.id,
-          action: 'deleted',
-          label: 'Deleted',
-          save,
-          previousStatus: save.status,
-          timestamp: Date.now(),
-        },
-      };
-    });
+    set((s) => ({
+      ...withDerivedSaves(s, s.allSaves.filter((sv) => sv.id !== save.id)),
+      undoEntry: {
+        id: save.id,
+        action: 'deleted',
+        label: 'Deleted',
+        save,
+        previousStatus: save.status,
+        timestamp: Date.now(),
+      },
+    }));
     try {
       await apiClient.delete(`/saves/${save.id}`);
       void deleteCachedThumbnail(save.id);
       void get().fetchCategories();
     } catch {
-      set((s) => {
-        const allSaves = [...s.allSaves, save];
-        return { allSaves, saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter) };
-      });
+      set((s) => withDerivedSaves(s, [...s.allSaves, save]));
     }
   },
 
   async retrySave(save): Promise<void> {
-    set((s) => {
-      const allSaves = s.allSaves.map((sv) =>
-        sv.id === save.id ? { ...sv, processing_status: 'processing' as const } : sv,
-      );
-      return { allSaves, saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter) };
-    });
+    set((s) =>
+      withDerivedSaves(
+        s,
+        s.allSaves.map((sv) =>
+          sv.id === save.id ? { ...sv, processing_status: 'processing' as const } : sv,
+        ),
+      ),
+    );
     try {
       await apiClient.post(`/saves/${save.id}/retry`);
     } catch {
-      set((s) => {
-        const allSaves = s.allSaves.map((sv) =>
-          sv.id === save.id ? { ...sv, processing_status: 'failed' as const } : sv,
-        );
-        return { allSaves, saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter) };
-      });
+      set((s) =>
+        withDerivedSaves(
+          s,
+          s.allSaves.map((sv) =>
+            sv.id === save.id ? { ...sv, processing_status: 'failed' as const } : sv,
+          ),
+        ),
+      );
     }
   },
 
@@ -451,33 +449,25 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
     if (!undoEntry) return;
 
     if (undoEntry.action === 'deleted') {
-      set((s) => {
-        const allSaves = [undoEntry.save, ...s.allSaves];
-        return {
-          allSaves,
-          saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-          undoEntry: null,
-        };
-      });
+      set((s) => ({
+        ...withDerivedSaves(s, [undoEntry.save, ...s.allSaves]),
+        undoEntry: null,
+      }));
       try {
         await apiClient.patch(`/saves/${undoEntry.id}`, { status: undoEntry.previousStatus });
       } catch {
-        set((s) => {
-          const allSaves = s.allSaves.filter((sv) => sv.id !== undoEntry.id);
-          return { allSaves, saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter) };
-        });
+        set((s) => withDerivedSaves(s, s.allSaves.filter((sv) => sv.id !== undoEntry.id)));
       }
     } else {
-      set((s) => {
-        const allSaves = s.allSaves.map((sv) =>
-          sv.id === undoEntry.id ? { ...sv, status: undoEntry.previousStatus } : sv,
-        );
-        return {
-          allSaves,
-          saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-          undoEntry: null,
-        };
-      });
+      set((s) => ({
+        ...withDerivedSaves(
+          s,
+          s.allSaves.map((sv) =>
+            sv.id === undoEntry.id ? { ...sv, status: undoEntry.previousStatus } : sv,
+          ),
+        ),
+        undoEntry: null,
+      }));
       try {
         await apiClient.patch(`/saves/${undoEntry.id}`, { status: undoEntry.previousStatus });
       } catch {
@@ -516,17 +506,14 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   async bulkMarkDone(): Promise<void> {
     const { selectedIds } = get();
     const ids = [...selectedIds];
-    set((s) => {
-      const allSaves = s.allSaves.map((sv) =>
-        selectedIds.has(sv.id) ? { ...sv, status: 'done' as const } : sv,
-      );
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        isMultiSelectActive: false,
-        selectedIds: new Set(),
-      };
-    });
+    set((s) => ({
+      ...withDerivedSaves(
+        s,
+        s.allSaves.map((sv) => (selectedIds.has(sv.id) ? { ...sv, status: 'done' as const } : sv)),
+      ),
+      isMultiSelectActive: false,
+      selectedIds: new Set<string>(),
+    }));
     await Promise.allSettled(ids.map((id) => apiClient.patch(`/saves/${id}`, { status: 'done' })));
     ids.forEach((id) => void deleteCachedThumbnail(id));
     void get().fetchCategories();
@@ -535,17 +522,16 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   async bulkSkip(): Promise<void> {
     const { selectedIds } = get();
     const ids = [...selectedIds];
-    set((s) => {
-      const allSaves = s.allSaves.map((sv) =>
-        selectedIds.has(sv.id) ? { ...sv, status: 'skipped' as const } : sv,
-      );
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        isMultiSelectActive: false,
-        selectedIds: new Set(),
-      };
-    });
+    set((s) => ({
+      ...withDerivedSaves(
+        s,
+        s.allSaves.map((sv) =>
+          selectedIds.has(sv.id) ? { ...sv, status: 'skipped' as const } : sv,
+        ),
+      ),
+      isMultiSelectActive: false,
+      selectedIds: new Set<string>(),
+    }));
     await Promise.allSettled(
       ids.map((id) => apiClient.patch(`/saves/${id}`, { status: 'skipped' })),
     );
@@ -555,15 +541,11 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   async bulkDelete(): Promise<void> {
     const { selectedIds } = get();
     const ids = [...selectedIds];
-    set((s) => {
-      const allSaves = s.allSaves.filter((sv) => !selectedIds.has(sv.id));
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        isMultiSelectActive: false,
-        selectedIds: new Set(),
-      };
-    });
+    set((s) => ({
+      ...withDerivedSaves(s, s.allSaves.filter((sv) => !selectedIds.has(sv.id))),
+      isMultiSelectActive: false,
+      selectedIds: new Set<string>(),
+    }));
     await Promise.allSettled(ids.map((id) => apiClient.delete(`/saves/${id}`)));
     ids.forEach((id) => void deleteCachedThumbnail(id));
     void get().fetchCategories();
@@ -574,19 +556,18 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
     const ids = [...selectedIds];
     const targetCat = get().categories.find((c) => c.id === categoryId);
     if (!targetCat) return;
-    set((s) => {
-      const allSaves = s.allSaves.map((sv) =>
-        selectedIds.has(sv.id)
-          ? { ...sv, category: { id: targetCat.id, name: targetCat.name } }
-          : sv,
-      );
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        isMultiSelectActive: false,
-        selectedIds: new Set(),
-      };
-    });
+    set((s) => ({
+      ...withDerivedSaves(
+        s,
+        s.allSaves.map((sv) =>
+          selectedIds.has(sv.id)
+            ? { ...sv, category: { id: targetCat.id, name: targetCat.name } }
+            : sv,
+        ),
+      ),
+      isMultiSelectActive: false,
+      selectedIds: new Set<string>(),
+    }));
     await Promise.allSettled(
       ids.map((id) => apiClient.patch(`/saves/${id}`, { category_id: categoryId })),
     );
@@ -609,12 +590,12 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
       }
     }
 
-    set((s) => {
-      const allSaves = s.allSaves.map((sv) =>
-        sv.id === update.id ? { ...sv, ...update } : sv,
-      );
-      return { allSaves, saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter) };
-    });
+    set((s) =>
+      withDerivedSaves(
+        s,
+        s.allSaves.map((sv) => (sv.id === update.id ? { ...sv, ...update } : sv)),
+      ),
+    );
   },
 
   // Adds a newly created save to the top of allSaves and re-derives visible list.
@@ -632,11 +613,7 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
           : cat,
       );
 
-      return {
-        allSaves,
-        saves: applyFilter(allSaves, s.activeCategoryId, s.searchQuery, s.platformFilter, s.statusFilter),
-        categories,
-      };
+      return { ...withDerivedSaves(s, allSaves), categories };
     });
   },
 
@@ -660,7 +637,8 @@ export const useSavesStore = create<SavesStore>((set, get) => ({
   dismissTrialBanner(): void {
     set({ trialBannerDismissed: true });
   },
-}));
+  };
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed selector hooks

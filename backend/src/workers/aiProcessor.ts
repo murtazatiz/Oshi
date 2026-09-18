@@ -2,7 +2,7 @@ import { Worker, type Job } from 'bullmq';
 import { prisma } from '../lib/prisma';
 import { redisConnection, QUEUE_NAMES, type AiProcessingJobData } from '../queue';
 import { fetchContentMetadata } from '../services/metadataService';
-import { classifyContent } from '../services/aiService';
+import { classifyContent, resolveCategoryId } from '../services/aiService';
 import { Sentry } from '../services/sentry';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,9 +50,6 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
     orderBy: { sortOrder: 'asc' },
   });
   const categoryNames = userCategories.map((c) => c.name);
-  const nameToId = new Map<string, string>(
-    userCategories.map((c) => [c.name.toLowerCase(), c.id]),
-  );
 
   // Step 10: Classify with AI (passing the user's actual category names)
   const classification = await classifyContent(metadata, categoryNames);
@@ -72,13 +69,9 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
     return;
   }
 
-  // Resolve the AI category name to the user's category row using the
-  // previously fetched categories. Matching is case-insensitive and always
-  // falls back to the user's "Other" category when present.
-  let categoryId = nameToId.get(classification.category.toLowerCase()) ?? null;
-  if (!categoryId) {
-    categoryId = nameToId.get('other') ?? null;
-  }
+  // Resolve the AI category name to the user's category row — aiService owns
+  // the matching rules (case-insensitive, "Other" fallback).
+  const categoryId = resolveCategoryId(classification.category, userCategories);
 
   console.log('[ai-processor] Classification result:', {
     category: classification.category,

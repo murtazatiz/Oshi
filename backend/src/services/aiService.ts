@@ -83,10 +83,30 @@ function buildUserMessage(meta: ContentMetadata): string {
 }
 
 /**
+ * Resolve an AI-returned category NAME to the user's category row id.
+ *
+ * This module owns categorisation semantics end to end: parseAiResponse
+ * guarantees the returned name is one of the user's categories (or "Other"),
+ * and this function is the one place that maps a name to an id — matching is
+ * case-insensitive and always falls back to the user's "Other" category when
+ * the name has no row (e.g. the category was deleted mid-processing).
+ * Returns null only when the user has no "Other" category either.
+ */
+export function resolveCategoryId(
+  categoryName: string,
+  categories: ReadonlyArray<{ id: string; name: string }>,
+): string | null {
+  const lookup = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]));
+  return lookup.get(categoryName.toLowerCase()) ?? lookup.get('other') ?? null;
+}
+
+/**
  * Parse the raw OpenAI response text into a typed AiClassification.
  * Validates against the user's actual category names.
+ * Exported so the parsing/validation rules are exercisable through the module
+ * interface without a live OpenAI call (the interface is the test surface).
  */
-function parseAiResponse(raw: string, validCategoryNames: string[]): AiClassification {
+export function parseAiResponse(raw: string, validCategoryNames: string[]): AiClassification {
   const cleaned = raw.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
   const parsed = JSON.parse(cleaned) as Record<string, unknown>;
 

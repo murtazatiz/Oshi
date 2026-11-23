@@ -1,7 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import {
+  DarkTheme,
+  DefaultTheme,
   NavigationContainer,
+  type Theme as NavigationTheme,
   type LinkingOptions,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -9,7 +12,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { theme } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import { navigationRef } from './navigationRef';
 import { useOnboardingStore } from '../store/onboardingStore';
 import { useAuthStore } from '../store/authStore';
@@ -140,12 +143,13 @@ const linking: LinkingOptions<RootStackParamList> = {
 // Auth Stack navigator
 // ─────────────────────────────────────────────────────────────────────────────
 function AuthNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <AuthStack.Navigator
       screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
@@ -162,11 +166,12 @@ function AuthNavigator(): React.JSX.Element {
 // Allows the Library tab to push additional screens while keeping the tab bar.
 // ─────────────────────────────────────────────────────────────────────────────
 function LibraryNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <LibraryStack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <LibraryStack.Screen name="LibraryHome" component={LibraryScreen} />
@@ -179,11 +184,12 @@ function LibraryNavigator(): React.JSX.Element {
 // Allows deep-linking to Reminders and Subscription sub-screens (PRD §4).
 // ─────────────────────────────────────────────────────────────────────────────
 function SettingsNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <SettingsStack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <SettingsStack.Screen name="SettingsHome" component={SettingsScreen} />
@@ -205,6 +211,7 @@ function SettingsNavigator(): React.JSX.Element {
 // clipped by or overlapping the phone's own nav gestures.
 // ─────────────────────────────────────────────────────────────────────────────
 function MainTabNavigator(): React.JSX.Element {
+  const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
 
   // On iOS the home indicator is included in the inset (≈34px on Face ID devices).
@@ -219,11 +226,11 @@ function MainTabNavigator(): React.JSX.Element {
     <MainTab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: theme.colors.accent,
-        tabBarInactiveTintColor: theme.colors.textMuted,
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: theme.colors.border,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
           borderTopWidth: StyleSheet.hairlineWidth,
           height: tabBarHeight,
           paddingBottom: bottomPad,
@@ -293,11 +300,12 @@ function TabIcon({
 // Hosts the tab navigator + ContentDetail modal sheet (PRD §3.6)
 // ─────────────────────────────────────────────────────────────────────────────
 function MainNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <MainStack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <MainStack.Screen name="MainTabs" component={MainTabNavigator} />
@@ -347,6 +355,7 @@ function MainNavigator(): React.JSX.Element {
 // until markComplete() is called at the end of step 9.
 // ─────────────────────────────────────────────────────────────────────────────
 function RootNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   // Session state comes from authStore — App.tsx's AuthInitialiser calls
   // initialise() on mount (getSession + onAuthStateChange). This navigator
   // previously ran its own parallel getSession/listener pair, giving the app
@@ -368,8 +377,8 @@ function RootNavigator(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.accent} />
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
@@ -396,10 +405,28 @@ function RootNavigator(): React.JSX.Element {
 //   NavigationContainer — React Navigation root with deep link config
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AppNavigator(): React.JSX.Element {
+  const { colors, isDark } = useTheme();
+  // Container theme drives the backdrop React Navigation paints behind
+  // screens during transitions; mirror the app's light/dark tokens onto it.
+  const navigationTheme = useMemo<NavigationTheme>(() => {
+    const base = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary: colors.accent,
+        background: colors.background,
+        card: colors.surface,
+        text: colors.textPrimary,
+        border: colors.border,
+      },
+    };
+  }, [colors, isDark]);
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <NavigationContainer ref={navigationRef} linking={linking}>
+        <NavigationContainer ref={navigationRef} linking={linking} theme={navigationTheme}>
           <RootNavigator />
         </NavigationContainer>
       </SafeAreaProvider>
@@ -415,7 +442,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.colors.background,
   },
   tabIconContainer: {
     alignItems: 'center',

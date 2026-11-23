@@ -8,6 +8,10 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
+import { useFonts } from 'expo-font';
+import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
+import { Sora_700Bold } from '@expo-google-fonts/sora';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
@@ -32,6 +36,23 @@ import {
 
 // Initialise PostHog analytics (PRD §5.9) — async, non-blocking
 void initAnalytics();
+
+// Keep the native splash up until the theme's fonts are registered, so the
+// first frame never renders in a fallback face.
+void SplashScreen.preventAutoHideAsync().catch(() => {
+  // Already hidden (e.g. fast refresh) — nothing to do
+});
+
+/**
+ * Font faces registered under the exact family names theme/index.ts uses
+ * (PRD §7 typography). The theme named these families from the start, but
+ * nothing loaded them, so every screen silently fell back to the system font.
+ */
+const THEME_FONTS = {
+  'Sora-Bold': Sora_700Bold,
+  'Inter-SemiBold': Inter_600SemiBold,
+  'Inter-Regular': Inter_400Regular,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AuthInitialiser — restores session on mount, syncs JWT to App Group
@@ -137,7 +158,17 @@ function OfflineQueueBanner(): React.JSX.Element | null {
 // App root
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AppRoot(): React.JSX.Element {
+function AppRoot(): React.JSX.Element | null {
+  const [fontsLoaded, fontError] = useFonts(THEME_FONTS);
+  const isReady = fontsLoaded || fontError !== null;
+
+  useEffect(() => {
+    // On a font error, render anyway with system fonts rather than hang on the splash
+    if (isReady) void SplashScreen.hideAsync().catch(() => {});
+  }, [isReady]);
+
+  if (!isReady) return null;
+
   return (
     <ShareIntentProvider>
       <ThemeProvider>

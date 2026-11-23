@@ -46,6 +46,7 @@ import {
   unsubscribeFromSaveUpdates,
 } from '../services/realtime';
 import { openPaywall } from '../services/paywall';
+import { CategoryPickerSheet } from '../components/CategoryPickerSheet';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuthStore } from '../store/authStore';
 import {
@@ -308,61 +309,6 @@ function MultiSelectBar({
         </TouchableOpacity>
       </View>
     </View>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CategoryPickerSheet — bottom sheet for "Move to Category" bulk action
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface CategoryPickerSheetProps {
-  visible: boolean;
-  categories: { id: string; name: string }[];
-  onSelect: (categoryId: string) => void;
-  onClose: () => void;
-}
-
-function CategoryPickerSheet({
-  visible,
-  categories,
-  onSelect,
-  onClose,
-}: CategoryPickerSheetProps): React.JSX.Element {
-  const { colors, theme } = useTheme();
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View
-          style={[
-            styles.pickerSheet,
-            {
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: theme.borderRadius.lg,
-              borderTopRightRadius: theme.borderRadius.lg,
-            },
-          ]}
-        >
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-          </View>
-          <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>Move to Category</Text>
-          {categories.map((cat) => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[styles.pickerRow, { paddingVertical: theme.spacing.sm + 4, paddingHorizontal: theme.spacing.md }]}
-              onPress={() => {
-                onSelect(cat.id);
-                onClose();
-              }}
-              activeOpacity={0.65}
-            >
-              <Text style={[styles.pickerRowText, { color: colors.textPrimary }]}>{cat.name}</Text>
-            </TouchableOpacity>
-          ))}
-          <View style={{ height: theme.spacing.xl }} />
-        </View>
-      </Pressable>
-    </Modal>
   );
 }
 
@@ -1108,8 +1054,9 @@ export default function HomeScreen(): React.JSX.Element {
 
       <CategoryPickerSheet
         visible={categoryPickerVisible}
+        title={saveForCategoryEdit ? 'Change Category' : 'Move to Category'}
         categories={categories}
-        onSelect={(catId) => void handleCategoryPickerSelect(catId)}
+        onSelect={(cat) => void handleCategoryPickerSelect(cat.id)}
         onClose={handleCategoryPickerClose}
       />
 
@@ -1304,26 +1251,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'flex-end',
   },
-  pickerSheet: {
-    paddingTop: 8,
-  },
-  handleRow: {
-    alignItems: 'center',
-    paddingBottom: 8,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-  },
-  pickerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  pickerRow: {},
-  pickerRowText: { fontSize: 16, fontWeight: '500' },
 
   // ── Notification re-ask modal ─────────────────────────────────────────────
   reaskCard: {

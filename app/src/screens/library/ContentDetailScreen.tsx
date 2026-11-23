@@ -22,11 +22,8 @@ import {
   ActionSheetIOS,
   Alert,
   Dimensions,
-  FlatList,
   Linking,
-  Modal,
   Platform,
-  Pressable,
   ScrollView,
   Share,
   StyleSheet,
@@ -49,6 +46,7 @@ import { apiClient } from '../../services/apiClient';
 import { useSavesStore } from '../../store/savesStore';
 import analytics from '../../services/analytics';
 import type { SaveData } from '../../components/OshiCard';
+import { CategoryPickerSheet } from '../../components/CategoryPickerSheet';
 import { getPlatformMeta } from '../../constants/platforms';
 import type { MainStackParamList } from '../../navigation/types';
 
@@ -90,45 +88,6 @@ function formatTime(seconds: number | null, contentType: string | null): string 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Category picker sheet
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface CategoryPickerProps {
-  visible: boolean;
-  categories: { id: string; name: string; emoji?: string }[];
-  onSelect: (id: string, name: string) => void;
-  onClose: () => void;
-}
-
-function CategoryPicker({ visible, categories, onSelect, onClose }: CategoryPickerProps): React.JSX.Element {
-  const { colors, theme } = useTheme();
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View style={[styles.sheet, { backgroundColor: colors.surface, borderTopLeftRadius: theme.borderRadius.lg, borderTopRightRadius: theme.borderRadius.lg }]}>
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-          </View>
-          <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>Change Category</Text>
-          {categories.map((cat) => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[styles.sheetRow, { paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm + 4 }]}
-              onPress={() => { onSelect(cat.id, cat.name); onClose(); }}
-              activeOpacity={0.65}
-            >
-              <Text style={styles.sheetRowEmoji}>{cat.emoji ?? '📌'}</Text>
-              <Text style={[styles.sheetRowText, { color: colors.textPrimary }]}>{cat.name}</Text>
-            </TouchableOpacity>
-          ))}
-          <View style={{ height: theme.spacing.xl }} />
-        </View>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Main screen
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -147,7 +106,9 @@ export default function ContentDetailScreen(): React.JSX.Element {
   const [isLoading, setIsLoading] = useState(true);
   const [note, setNote] = useState('');
   const [noteChanged, setNoteChanged] = useState(false);
-  const [categories, setCategories] = useState<{ id: string; name: string; emoji?: string }[]>([]);
+  // Shared with the Library via savesStore — no per-screen copy to go stale
+  const categories = useSavesStore((s) => s.categories);
+  const fetchCategories = useSavesStore((s) => s.fetchCategories);
   const [catPickerVisible, setCatPickerVisible] = useState(false);
   const [isSavingNote, setIsSavingNote] = useState(false);
 
@@ -164,13 +125,9 @@ export default function ContentDetailScreen(): React.JSX.Element {
   useEffect(() => {
     async function load(): Promise<void> {
       try {
-        const [saveRes, catRes] = await Promise.all([
-          apiClient.get<SaveData>(`/saves/${saveId}`),
-          apiClient.get<{ categories: { id: string; name: string; emoji?: string }[] }>('/categories'),
-        ]);
+        const saveRes = await apiClient.get<SaveData>(`/saves/${saveId}`);
         setSave(saveRes.data);
         setNote(saveRes.data.user_note ?? '');
-        setCategories(catRes.data.categories);
       } catch {
         Alert.alert('Error', 'Could not load save details.');
         navigation.goBack();
@@ -180,6 +137,11 @@ export default function ContentDetailScreen(): React.JSX.Element {
     }
     void load();
   }, [saveId, navigation]);
+
+  // Deep links can open this screen before the Library has loaded categories
+  useEffect(() => {
+    if (categories.length === 0) void fetchCategories();
+  }, [categories.length, fetchCategories]);
 
   // ── Engagement signal: opened ───────────────────────────────────────────
 
@@ -598,10 +560,11 @@ export default function ContentDetailScreen(): React.JSX.Element {
       </ScrollView>
 
       {/* Category picker */}
-      <CategoryPicker
+      <CategoryPickerSheet
         visible={catPickerVisible}
+        title="Change Category"
         categories={categories}
-        onSelect={(id, name) => void handleChangeCategory(id, name)}
+        onSelect={(cat) => void handleChangeCategory(cat.id, cat.name)}
         onClose={() => setCatPickerVisible(false)}
       />
     </SafeAreaView>
@@ -748,12 +711,4 @@ const styles = StyleSheet.create({
   },
 
   // Category picker
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  sheet: { paddingTop: 8 },
-  handleRow: { alignItems: 'center', paddingBottom: 8 },
-  handle: { width: 36, height: 4, borderRadius: 2 },
-  sheetTitle: { fontSize: 18, fontWeight: '700', paddingHorizontal: 16, paddingBottom: 12 },
-  sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  sheetRowEmoji: { fontSize: 20 },
-  sheetRowText: { fontSize: 16, fontWeight: '500' },
 });

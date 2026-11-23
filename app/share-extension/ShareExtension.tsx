@@ -5,7 +5,6 @@
  * PRD §3.1.1 UI states:
  *   1. Loading — skeleton card placeholder (max 1.5s)
  *   2. Confirmation — thumbnail, title, category badge, "Saved to Oshi ✓"
- *   3. Category change — tap badge → category list bottom sheet
  *   4. Queued (offline) — "Queued — will save when back online"
  *
  * PRD §3.1.5: On foreground, check for pending shares and process them.
@@ -16,7 +15,6 @@
  * handles the immediate share UI. This component handles:
  *   - Processing pending/queued shares when the app comes to foreground
  *   - Showing a syncing banner
- *   - Category re-assignment bottom sheet
  *
  * Uses theme values directly (not ThemeContext) since this may render before
  * ThemeProvider is mounted during cold start.
@@ -26,9 +24,6 @@ import {
   Animated,
   AppState,
   type AppStateStatus,
-  FlatList,
-  Modal,
-  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -53,12 +48,6 @@ const { colors, borderRadius, spacing, shadows } = theme;
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
-
-interface CategoryItem {
-  id: string;
-  name: string;
-  emoji: string;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Syncing banner — "X saves queued — syncing now…"
@@ -131,69 +120,6 @@ function SyncBanner({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Category picker bottom sheet
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface CategoryPickerProps {
-  visible: boolean;
-  categories: CategoryItem[];
-  onSelect: (category: CategoryItem) => void;
-  onClose: () => void;
-}
-
-function CategoryPicker({
-  visible,
-  categories,
-  onSelect,
-  onClose,
-}: CategoryPickerProps): React.JSX.Element {
-  const renderItem = useCallback(
-    ({ item }: { item: CategoryItem }) => (
-      <TouchableOpacity
-        style={[styles.catRow, { paddingVertical: spacing.sm + 4, paddingHorizontal: spacing.md }]}
-        onPress={() => onSelect(item)}
-        activeOpacity={0.65}
-      >
-        <Text style={styles.catEmoji}>{item.emoji}</Text>
-        <Text style={[styles.catName, { color: colors.textPrimary }]}>{item.name}</Text>
-      </TouchableOpacity>
-    ),
-    [onSelect],
-  );
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: borderRadius.lg,
-              borderTopRightRadius: borderRadius.lg,
-            },
-          ]}
-        >
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-          </View>
-          <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>
-            Change Category
-          </Text>
-          <FlatList
-            data={categories}
-            renderItem={renderItem}
-            keyExtractor={(item) => item.id}
-            style={{ maxHeight: 350 }}
-          />
-          <View style={{ height: spacing.xl }} />
-        </View>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // ShareExtensionHandler — top-level component
 //
 // Mount this inside App.tsx (or the root navigator). It listens for app
@@ -204,9 +130,6 @@ export default function ShareExtensionHandler(): React.JSX.Element | null {
   const [showBanner, setShowBanner] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [result, setResult] = useState<ShareProcessResult | null>(null);
-  const [categories, setCategories] = useState<CategoryItem[]>([]);
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [lastProcessedSaveId, setLastProcessedSaveId] = useState<string | null>(null);
 
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
@@ -253,40 +176,6 @@ export default function ShareExtensionHandler(): React.JSX.Element | null {
     return () => subscription.remove();
   }, [checkPendingShares]);
 
-  // ── Fetch categories for the picker ───────────────────────────────────
-
-  useEffect(() => {
-    async function loadCategories(): Promise<void> {
-      try {
-        const res = await apiClient.get<{ categories: CategoryItem[] }>('/categories');
-        setCategories(
-          res.data.categories.map((c) => ({
-            id: c.id,
-            name: c.name,
-            emoji: (c as CategoryItem & { emoji?: string }).emoji ?? '📌',
-          })),
-        );
-      } catch {
-        // Categories will just be empty — picker won't open
-      }
-    }
-    void loadCategories();
-  }, []);
-
-  // ── Category change handler ───────────────────────────────────────────
-
-  async function handleCategoryChange(category: CategoryItem): Promise<void> {
-    setPickerVisible(false);
-    if (!lastProcessedSaveId) return;
-    try {
-      await apiClient.patch(`/saves/${lastProcessedSaveId}`, {
-        category_id: category.id,
-      });
-    } catch {
-      // Non-fatal — category wasn't changed
-    }
-  }
-
   // ── Render ────────────────────────────────────────────────────────────
 
   if (!showBanner) return null;
@@ -297,12 +186,6 @@ export default function ShareExtensionHandler(): React.JSX.Element | null {
         pendingCount={pendingCount}
         result={result}
         onDismiss={() => setShowBanner(false)}
-      />
-      <CategoryPicker
-        visible={pickerVisible}
-        categories={categories}
-        onSelect={(cat) => void handleCategoryChange(cat)}
-        onClose={() => setPickerVisible(false)}
       />
     </>
   );
@@ -341,40 +224,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // ── Category picker ───────────────────────────────────────────────────────
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    paddingTop: 8,
-  },
-  handleRow: {
-    alignItems: 'center',
-    paddingBottom: 8,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-  },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  catRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  catEmoji: {
-    fontSize: 20,
-  },
-  catName: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
 });

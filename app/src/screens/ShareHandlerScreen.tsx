@@ -11,13 +11,10 @@
  * Uses expo-share-intent's useShareIntentContext() to read the shared content
  * and resetShareIntent() to clear it after processing.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
-  FlatList,
-  Modal,
-  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -33,6 +30,7 @@ import { enqueue } from '../services/offlineQueue';
 import { useSavesStore } from '../store/savesStore';
 import type { SaveData } from '../components/OshiCard';
 import { detectPlatformFromUrl, getPlatformMeta } from '../constants/platforms';
+import { CategoryPickerSheet, type CategoryOption } from '../components/CategoryPickerSheet';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform detection
@@ -55,71 +53,6 @@ function extractUrl(raw: string): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Category picker
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface CategoryItem {
-  id: string;
-  name: string;
-  emoji: string;
-}
-
-interface CategoryPickerProps {
-  visible: boolean;
-  categories: CategoryItem[];
-  onSelect: (cat: CategoryItem) => void;
-  onClose: () => void;
-}
-
-function CategoryPicker({ visible, categories, onSelect, onClose }: CategoryPickerProps): React.JSX.Element {
-  const { colors, theme } = useTheme();
-  const { borderRadius, spacing } = theme;
-
-  const renderItem = useCallback(
-    ({ item }: { item: CategoryItem }) => (
-      <TouchableOpacity
-        style={[styles.catRow, { paddingVertical: spacing.sm + 4, paddingHorizontal: spacing.md }]}
-        onPress={() => onSelect(item)}
-        activeOpacity={0.65}
-      >
-        <Text style={styles.catEmoji}>{item.emoji}</Text>
-        <Text style={[styles.catName, { color: colors.textPrimary }]}>{item.name}</Text>
-      </TouchableOpacity>
-    ),
-    [onSelect, colors.textPrimary, spacing],
-  );
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: borderRadius.lg,
-              borderTopRightRadius: borderRadius.lg,
-            },
-          ]}
-        >
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-          </View>
-          <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>Change Category</Text>
-          <FlatList
-            data={categories}
-            renderItem={renderItem}
-            keyExtractor={(item) => item.id}
-            style={{ maxHeight: 350 }}
-          />
-          <View style={{ height: spacing.xl }} />
-        </View>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // ShareHandlerScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -133,7 +66,9 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
   const [status, setStatus] = useState<Status>('loading');
   const [categoryName, setCategoryName] = useState('Other');
   const [savedId, setSavedId] = useState<string | null>(null);
-  const [categories, setCategories] = useState<CategoryItem[]>([]);
+  // Shared with the Library via savesStore — no per-screen copy to go stale
+  const categories = useSavesStore((s) => s.categories);
+  const fetchCategories = useSavesStore((s) => s.fetchCategories);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
 
@@ -173,28 +108,12 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
     }).start();
   }, [resolvedUrl, fadeAnim]);
 
-  // ── Fetch categories ──────────────────────────────────────────────────
+  // ── Categories for the picker ─────────────────────────────────────────
+  // A share can cold-start the app before the Library has loaded categories
 
   useEffect(() => {
-    if (!resolvedUrl) return;
-    async function load(): Promise<void> {
-      try {
-        const res = await apiClient.get<{
-          categories: Array<{ id: string; name: string; emoji?: string }>;
-        }>('/categories');
-        setCategories(
-          res.data.categories.map((c) => ({
-            id: c.id,
-            name: c.name,
-            emoji: c.emoji ?? '📌',
-          })),
-        );
-      } catch {
-        // Categories unavailable — picker will be empty
-      }
-    }
-    void load();
-  }, [resolvedUrl]);
+    if (resolvedUrl && categories.length === 0) void fetchCategories();
+  }, [resolvedUrl, categories.length, fetchCategories]);
 
   // ── Save the URL ──────────────────────────────────────────────────────
 
@@ -275,7 +194,7 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
 
   // ── Category change ───────────────────────────────────────────────────
 
-  async function handleCategoryChange(cat: CategoryItem): Promise<void> {
+  async function handleCategoryChange(cat: CategoryOption): Promise<void> {
     setPickerVisible(false);
     setCategoryName(cat.name);
     if (!savedId) return;
@@ -398,8 +317,9 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
       </View>
 
       {/* Category picker */}
-      <CategoryPicker
+      <CategoryPickerSheet
         visible={pickerVisible}
+        title="Change Category"
         categories={categories}
         onSelect={(cat) => void handleCategoryChange(cat)}
         onClose={() => setPickerVisible(false)}
@@ -480,40 +400,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Category picker
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    paddingTop: 8,
-  },
-  handleRow: {
-    alignItems: 'center',
-    paddingBottom: 8,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-  },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  catRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  catEmoji: {
-    fontSize: 20,
-  },
-  catName: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
 });

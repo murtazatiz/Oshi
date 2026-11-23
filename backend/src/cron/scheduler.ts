@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { prisma } from '../lib/prisma';
 import {
   sendDailyReminder,
+  sendMorningDigest,
   getTopUnreadCategory,
   UTC_DAY_NAMES,
 } from '../services/notificationService';
@@ -13,6 +14,7 @@ import { Sentry } from '../services/sentry';
 
 let dailyReminderTask: cron.ScheduledTask | null = null;
 let monthlyResetTask: cron.ScheduledTask | null = null;
+let morningDigestTask: cron.ScheduledTask | null = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -268,11 +270,118 @@ export function startMonthlySaveCountReset(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Morning Digest — Pro feature, 8 AM in each user's own timezone (PRD §3.7.2)
+//
+// Runs every minute (timezones with :30/:45 offsets, e.g. India, never hit
+// 08:00 on an hourly UTC tick) and sends to Pro/trial users who turned the
+// digest on and whose local clock reads 08:00. "Yesterday" is the user's
+// local calendar day. Users who saved nothing yesterday get no push.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DIGEST_LOCAL_HOUR = 8;
+
+/** Wall-clock hour/minute in an IANA timezone; falls back to UTC for invalid zones. */
+function localClock(timezone: string, at: Date): { hour: number; minute: number } {
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: 'numeric',
+      minute: 'numeric',
+      hourCycle: 'h23',
+    }).formatToParts(at);
+  } catch {
+    return { hour: at.getUTCHours(), minute: at.getUTCMinutes() };
+  }
+  const hour = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+  const minute = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+  return { hour, minute };
+}
+
+async function processMorningDigest(user: { id: string; token: string }, localMidnight: Date): Promise<void> {
+  const yesterdayStart = new Date(localMidnight.getTime() - 24 * 60 * 60 * 1000);
+  const savedYesterday = { userId: user.id, deletedAt: null, savedAt: { gte: yesterdayStart, lt: localMidnight } };
+
+  const [count, top] = await Promise.all([
+    prisma.save.count({ where: savedYesterday }),
+    prisma.save.findFirst({
+      where: { ...savedYesterday, title: { not: null } },
+      orderBy: { savedAt: 'desc' },
+      select: { title: true },
+    }),
+  ]);
+  if (count === 0) return;
+
+  await sendMorningDigest({
+    userId: user.id,
+    token: user.token,
+    savedYesterday: count,
+    topSaveTitle: top?.title ?? null,
+  });
+}
+
+export function startMorningDigestScheduler(): void {
+  let isRunning = false;
+
+  morningDigestTask = cron.schedule(
+    '* * * * *',
+    async () => {
+      if (isRunning) return;
+      isRunning = true;
+      try {
+        const now = new Date();
+        now.setUTCSeconds(0, 0);
+
+        const candidates = await prisma.user.findMany({
+          where: {
+            morningDigest: true,
+            subscriptionStatus: { in: ['pro', 'trial'] },
+            notificationToken: { not: null },
+            deletedAt: null,
+          },
+          select: { id: true, timezone: true, notificationToken: true },
+        });
+
+        const due = candidates.flatMap((u) => {
+          const { hour, minute } = localClock(u.timezone, now);
+          if (hour !== DIGEST_LOCAL_HOUR || minute !== 0 || u.notificationToken === null) return [];
+          return [{ id: u.id, token: u.notificationToken }];
+        });
+        if (due.length === 0) return;
+
+        // At 08:00 local, local midnight is exactly 8 hours ago
+        const localMidnight = new Date(now.getTime() - DIGEST_LOCAL_HOUR * 60 * 60 * 1000);
+        console.info(`[digest-cron] Sending morning digest to ${due.length} user(s)`);
+
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < due.length; i += BATCH_SIZE) {
+          const results = await Promise.allSettled(
+            due.slice(i, i + BATCH_SIZE).map((u) => processMorningDigest(u, localMidnight)),
+          );
+          for (const r of results) {
+            if (r.status === 'rejected') Sentry.captureException(r.reason);
+          }
+        }
+      } catch (err) {
+        console.error('[digest-cron] Error:', err);
+        Sentry.captureException(err);
+      } finally {
+        isRunning = false;
+      }
+    },
+    { timezone: 'UTC' },
+  );
+
+  console.info('[scheduler] Morning digest cron started (every minute, 08:00 user-local)');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Stop all cron tasks — called during graceful shutdown
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function stopSchedulers(): void {
   dailyReminderTask?.stop();
   monthlyResetTask?.stop();
+  morningDigestTask?.stop();
   console.info('[scheduler] All cron tasks stopped');
 }

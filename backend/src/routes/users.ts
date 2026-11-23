@@ -70,6 +70,7 @@ function formatUser(user: {
   notificationPermission: string;
   reminderTime: string;
   reminderDays: unknown;
+  morningDigest: boolean;
   trialStartedAt: Date | null;
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {
@@ -81,6 +82,7 @@ function formatUser(user: {
     notification_permission: user.notificationPermission,
     reminder_time: user.reminderTime,
     reminder_days: user.reminderDays,
+    morning_digest: user.morningDigest,
   };
 
   if (user.displayName !== null) out.display_name = user.displayName;
@@ -106,6 +108,7 @@ const userSelect = {
   notificationPermission: true,
   reminderTime: true,
   reminderDays: true,
+  morningDigest: true,
   trialStartedAt: true,
 } as const;
 
@@ -134,6 +137,11 @@ const getMeSelect = {
 //   trial_expiry_banner_due (PRD §3.4.3):
 //     Set to true by the trial_expiry_day BullMQ job.
 //     App renders the "Your Pro trial ends today — Upgrade Now" top banner.
+//
+//   upsell_banner_due (PRD §8.3 "Day 5 soft upsell banner … for free users"):
+//     true when subscription_status = 'free' AND the account is ≥ 5 days old.
+//     Every signup starts a 7-day trial, so in practice this is every user
+//     whose trial has ended. The app owns dismissal (hidden for 7 days).
 // ─────────────────────────────────────────────────────────────────────────────
 router.get(
   '/me',
@@ -179,6 +187,11 @@ router.get(
 
       if (user.trialExpiryBannerDue) {
         response.trial_expiry_banner_due = true;
+      }
+
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      if (user.subscriptionStatus === 'free' && user.createdAt < fiveDaysAgo) {
+        response.upsell_banner_due = true;
       }
 
       res.json(response);

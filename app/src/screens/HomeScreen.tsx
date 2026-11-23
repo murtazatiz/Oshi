@@ -441,6 +441,7 @@ export default function HomeScreen(): React.JSX.Element {
   const notificationReaskDue = useSavesStore((s) => s.notificationReaskDue);
   const trialExpiryBannerDue = useSavesStore((s) => s.trialExpiryBannerDue);
   const trialBannerDismissed = useSavesStore((s) => s.trialBannerDismissed);
+  const upsellBannerDue = useSavesStore((s) => s.upsellBannerDue);
 
   const {
     fetchCategories,
@@ -469,6 +470,7 @@ export default function HomeScreen(): React.JSX.Element {
     updateSave,
     checkUserFlags,
     dismissTrialBanner,
+    dismissUpsellBanner,
     loadSortPreference,
   } = useSavesActions();
 
@@ -849,6 +851,7 @@ export default function HomeScreen(): React.JSX.Element {
   // ── Render ────────────────────────────────────────────────────────────────
 
   const showTrialBanner = trialExpiryBannerDue && !trialBannerDismissed;
+  const showUpsellBanner = upsellBannerDue && !showTrialBanner;
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]} edges={['top']}>
@@ -1021,6 +1024,27 @@ export default function HomeScreen(): React.JSX.Element {
               <Text style={styles.trialUpgradeText}>Upgrade Now</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={dismissTrialBanner} hitSlop={8} accessibilityLabel="Dismiss banner">
+              <Text style={[styles.trialDismiss, { color: colors.textMuted }]}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ── Day-5 soft upsell banner (PRD §8.3, free users) ────────────── */}
+      {showUpsellBanner && (
+        <View style={[styles.trialBanner, { backgroundColor: colors.accent + '14' }]}>
+          <Text style={[styles.trialBannerText, { color: colors.textPrimary }]}>
+            You're on the free plan — get unlimited saves with Oshi Pro
+          </Text>
+          <View style={styles.trialBannerActions}>
+            <TouchableOpacity
+              onPress={() => openPaywall('upsell_banner')}
+              style={[styles.trialUpgradeBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}
+              accessibilityLabel="See Oshi Pro"
+            >
+              <Text style={styles.trialUpgradeText}>See Pro</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={dismissUpsellBanner} hitSlop={8} accessibilityLabel="Dismiss banner">
               <Text style={[styles.trialDismiss, { color: colors.textMuted }]}>✕</Text>
             </TouchableOpacity>
           </View>

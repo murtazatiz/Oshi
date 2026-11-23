@@ -47,7 +47,10 @@ npm run build              # tsc → dist/
 npm start                  # node dist/index.js (production)
 npm run lint               # tsc --noEmit  (THIS is the only "lint"/typecheck)
 npm run prisma:generate    # regenerate Prisma client after schema.prisma changes
-npm run prisma:migrate     # prisma migrate deploy (uses DIRECT_URL, not pooled)
+npm run prisma:migrate     # prisma migrate deploy — currently a NO-OP: there is no
+                           # migrations baseline. Schema changes ship as hand-run SQL
+                           # in prisma/manual-migrations/, applied in Supabase BEFORE
+                           # deploying (ADR-0020)
 ```
 
 ### App (`cd app`)
@@ -141,6 +144,8 @@ Cron (`cron/scheduler.ts`, all UTC):
   hour:minute matches now and whose `reminder_days` includes today; skips users
   with zero unread saves or who opened the app within the last 2h.
 - Monthly reset: `0 0 1 * *` resets `items_saved_this_month` to 0.
+- Morning Digest: every minute, Pro/trial users with `morning_digest` on whose
+  local time (`users.timezone`) is 08:00 get a summary of yesterday's saves.
 
 ### Data model (`prisma/schema.prisma`)
 Tables: `users`, `categories`, `saves`, `user_engagement_signals`,
@@ -167,7 +172,8 @@ Sentry error boundary (`wrapWithSentry`).
 src/
   navigation/   AppNavigator.tsx (stacks/tabs + deep-link config), types.ts (param lists)
   screens/      auth/, onboarding/, library/, search/, settings/ + top-level screens
-  components/   OshiCard, CategoryTabs, StreakDisplay, UndoToast, *SkeletonCard, etc.
+  components/   OshiCard, CategoryTabs, StreakDisplay, UndoToast, *SkeletonCard,
+                ReminderSettings (shared by Settings + RemindersScreen), etc.
   store/        Zustand: authStore, savesStore, onboardingStore, subscriptionStore
   services/     apiClient (axios), supabase, analytics, errorMonitoring, purchases,
                 offlineQueue, shareExtension, realtime, paywall

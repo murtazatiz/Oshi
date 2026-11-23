@@ -49,6 +49,9 @@ export interface UndoEntry {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SORT_STORAGE_KEY = 'oshi_sort_global';
+/** When the free-plan upsell banner was last dismissed (ms epoch); it returns after UPSELL_SNOOZE_MS */
+const UPSELL_DISMISSED_KEY = 'oshi_upsell_dismissed_at';
+const UPSELL_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Filter allSaves by category, search, platform, and status.
@@ -158,6 +161,8 @@ interface SavesState {
   notificationReaskDue: boolean;
   trialExpiryBannerDue: boolean;
   trialBannerDismissed: boolean;
+  /** PRD §8.3 day-5 soft upsell for free users (server flag, minus a 7-day snooze) */
+  upsellBannerDue: boolean;
 }
 
 interface SavesActions {
@@ -200,6 +205,7 @@ interface SavesActions {
   // Banners
   checkUserFlags: () => Promise<void>;
   dismissTrialBanner: () => void;
+  dismissUpsellBanner: () => void;
 
   // Helpers
   loadSortPreference: () => Promise<void>;
@@ -271,6 +277,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   notificationReaskDue: false,
   trialExpiryBannerDue: false,
   trialBannerDismissed: false,
+  upsellBannerDue: false,
 
   // ── Categories ────────────────────────────────────────────────────────────
 
@@ -626,10 +633,21 @@ export const useSavesStore = create<SavesStore>((set, get) => {
       const res = await apiClient.get<{
         notification_reask_due?: boolean;
         trial_expiry_banner_due?: boolean;
+        upsell_banner_due?: boolean;
       }>('/users/me');
+
+      let isUpsellSnoozed = false;
+      try {
+        const dismissedAt = Number(await AsyncStorage.getItem(UPSELL_DISMISSED_KEY));
+        isUpsellSnoozed = dismissedAt > 0 && Date.now() - dismissedAt < UPSELL_SNOOZE_MS;
+      } catch {
+        // Storage unavailable — show the banner
+      }
+
       set({
         notificationReaskDue: res.data.notification_reask_due ?? false,
         trialExpiryBannerDue: res.data.trial_expiry_banner_due ?? false,
+        upsellBannerDue: (res.data.upsell_banner_due ?? false) && !isUpsellSnoozed,
       });
     } catch {
       // Ignore
@@ -638,6 +656,13 @@ export const useSavesStore = create<SavesStore>((set, get) => {
 
   dismissTrialBanner(): void {
     set({ trialBannerDismissed: true });
+  },
+
+  dismissUpsellBanner(): void {
+    set({ upsellBannerDue: false });
+    void AsyncStorage.setItem(UPSELL_DISMISSED_KEY, String(Date.now())).catch(() => {
+      // Not persisted — the banner returns on the next flag check
+    });
   },
   };
 });
@@ -716,6 +741,7 @@ export function useSavesActions() {
       addSaveToTop: s.addSaveToTop,
       checkUserFlags: s.checkUserFlags,
       dismissTrialBanner: s.dismissTrialBanner,
+      dismissUpsellBanner: s.dismissUpsellBanner,
       loadSortPreference: s.loadSortPreference,
     })),
   );

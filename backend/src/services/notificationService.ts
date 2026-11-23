@@ -265,6 +265,42 @@ export async function sendDailyReminder(opts: {
 }
 
 /**
+ * Composes and sends the Pro Morning Digest push (PRD §3.7.2): a brief
+ * summary of what the user saved yesterday, at 8 AM in their timezone.
+ * Callers skip users who saved nothing — an empty digest is never sent.
+ */
+export async function sendMorningDigest(opts: {
+  userId: string;
+  token: string;
+  savedYesterday: number;
+  topSaveTitle: string | null;
+}): Promise<void> {
+  const { userId, token, savedYesterday, topSaveTitle } = opts;
+
+  const body =
+    topSaveTitle === null
+      ? `You saved ${savedYesterday} item${savedYesterday === 1 ? '' : 's'} yesterday.`
+      : savedYesterday === 1
+        ? `Yesterday you saved "${topSaveTitle}".`
+        : `Yesterday you saved ${savedYesterday} items — including "${topSaveTitle}".`;
+
+  const sent = await sendPushNotification({
+    token,
+    title: 'Your morning digest ☀️',
+    body,
+    deepLinkUrl: 'oshi://library',
+  });
+
+  if (sent) {
+    await logNotification({
+      userId,
+      notificationType: 'morning_digest',
+      itemCount: savedYesterday,
+    });
+  }
+}
+
+/**
  * Sends the trial expiry warning push (24 h before trial ends — PRD §3.4.3).
  * "Your Oshi Pro trial ends tomorrow. Keep unlimited saves and smart reminders."
  */

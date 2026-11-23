@@ -75,6 +75,8 @@ const PatchSettingsSchema = z.object({
     .array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']))
     .min(1, 'At least one reminder day is required')
     .optional(),
+  /** Pro-only (PRD §3.7.2) — enabling it as a free user is rejected */
+  morning_digest: z.boolean().optional(),
 });
 
 const PostLogOpenSchema = z.object({
@@ -138,24 +140,37 @@ router.patch(
         return;
       }
 
-      const { reminder_time, reminder_days } = parsed.data;
+      const { reminder_time, reminder_days, morning_digest } = parsed.data;
 
       if (reminder_time !== undefined) {
         console.log('[notifications] PATCH /settings received reminder_time:', reminder_time);
       }
 
-      if (reminder_time === undefined && reminder_days === undefined) {
+      if (reminder_time === undefined && reminder_days === undefined && morning_digest === undefined) {
         next(
           Errors.validation({
-            _errors: ['At least one of reminder_time or reminder_days must be provided.'],
+            _errors: ['At least one of reminder_time, reminder_days or morning_digest must be provided.'],
           }),
         );
         return;
       }
 
-      const data: { reminderTime?: string; reminderDays?: string[] } = {};
+      if (morning_digest === true) {
+        const user = await prisma.user.findUnique({
+          where: { id: req.userId },
+          select: { subscriptionStatus: true },
+        });
+        const isPro = user?.subscriptionStatus === 'pro' || user?.subscriptionStatus === 'trial';
+        if (!isPro) {
+          next(Errors.forbidden('Morning Digest is an Oshi Pro feature.'));
+          return;
+        }
+      }
+
+      const data: { reminderTime?: string; reminderDays?: string[]; morningDigest?: boolean } = {};
       if (reminder_time !== undefined) data.reminderTime = reminder_time;
       if (reminder_days !== undefined) data.reminderDays = reminder_days;
+      if (morning_digest !== undefined) data.morningDigest = morning_digest;
 
       const updated = await prisma.user.update({
         where: { id: req.userId },
@@ -163,6 +178,7 @@ router.patch(
         select: {
           reminderTime: true,
           reminderDays: true,
+          morningDigest: true,
         },
       });
 
@@ -173,6 +189,7 @@ router.patch(
       res.json({
         reminder_time: updated.reminderTime,
         reminder_days: updated.reminderDays,
+        morning_digest: updated.morningDigest,
       });
     } catch (err) {
       next(err);

@@ -79,7 +79,12 @@ Backend: finds the user's 'Other' category. Moves all saves from deleted categor
 5. Users Endpoints
 GET /users/me
 Response 200:
-{ "id": "uuid", "email": "user@example.com", "display_name": "Murtaza",   "avatar_url": "https://supabase.co/storage/v1/object/sign/avatars/uuid/profile.jpg?token=...",   "subscription_status": "pro", "subscription_expires_at": "2026-03-14T00:00:00Z",   "streak_count": 7, "items_saved_this_month": 45,   "notification_permission": "granted", "reminder_time": "19:00:00+00",   "reminder_days": ["mon","tue","wed","thu","fri","sat","sun"] }
+{ "id": "uuid", "email": "user@example.com", "display_name": "Murtaza",   "avatar_url": "https://supabase.co/storage/v1/object/sign/avatars/uuid/profile.jpg?token=...",   "subscription_status": "pro", "subscription_expires_at": "2026-03-14T00:00:00Z",   "streak_count": 7, "items_saved_this_month": 45,   "notification_permission": "granted", "reminder_time": "19:00:00+00",   "reminder_days": ["mon","tue","wed","thu","fri","sat","sun"],   "morning_digest": false }
+Computed flags, present only when true: notification_reask_due, trial_expiry_banner_due, upsell_banner_due (free plan and account ≥ 5 days old — PRD §8.3 day-5 soft upsell; the app snoozes it for 7 days on dismiss). (morning_digest and upsell_banner_due added 2026-11-23.)
+PATCH /notifications/settings
+Request: { reminder_time?, reminder_days?, morning_digest? }   — at least one field. reminder_time is UTC "HH:MM:SS+00"; reminder_days is a non-empty array of "mon"…"sun".
+Response 200: { reminder_time, reminder_days, morning_digest }
+morning_digest is Pro-only: setting it to true on the free plan returns 403 FORBIDDEN. When on, a push summarising yesterday's saves is sent at 08:00 in the user's timezone (none if nothing was saved). (morning_digest added 2026-11-23; PRD §6 lists this endpoint.)
 POST /users/avatar
 Request: multipart/form-data with field 'avatar' containing the image file (JPEG or PNG, max 500KB).
 Backend: uploads to Supabase Storage at path avatars/[user_id]/profile.jpg. Generates signed URL (expires 1 year). Updates users.avatar_url. Returns { avatar_url: '...' }.

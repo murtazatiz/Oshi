@@ -7,6 +7,7 @@
  *   category_limit — 4th custom category (403 CATEGORY_LIMIT_REACHED)
  *   settings       — "Upgrade to Pro" rows and Pro-only toggles in Settings
  *   trial_expiry   — trial-expiry banner CTA on the Library
+ *   upsell_banner  — day-5 soft upsell banner on the Library (free users)
  *
  * The two limit triggers fire automatically from apiClient's response
  * interceptor, so call sites never need to detect them to show the paywall.
@@ -18,6 +19,7 @@ export type PaywallTrigger =
   | 'category_limit'
   | 'settings'
   | 'trial_expiry'
+  | 'upsell_banner'
   | 'direct';
 
 export type LimitErrorCode = 'SAVE_LIMIT_REACHED' | 'CATEGORY_LIMIT_REACHED';

@@ -58,6 +58,10 @@ const HEADLINES: Record<PaywallTrigger, { title: string; sub: string }> = {
     title: "You've reached 3 custom categories",
     sub: 'Upgrade to Oshi Pro to organise your library with unlimited categories.',
   },
+  upsell_banner: {
+    title: 'Get more out of Oshi',
+    sub: 'Unlimited saves and categories, a morning digest, and priority AI processing.',
+  },
   trial_expiry: {
     title: 'Your Pro trial is ending',
     sub: 'Keep unlimited saves, smart reminders, and priority AI processing.',

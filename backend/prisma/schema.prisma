@@ -40,7 +40,7 @@ datasource db {
 // link_status          : "active" | "unavailable" | "private"
 // action (signal)      : "opened" | "skipped" | "done"
 // notification_type    : "daily_reminder" | "trial_expiry_warning" |
-//                        "trial_expiry_day" | "reengagement"
+//                        "trial_expiry_day" | "reengagement" | "morning_digest"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODEL: User
@@ -71,6 +71,10 @@ model User {
 
   /// ["mon","tue","wed","thu","fri","sat","sun"] — JSONB (PRD §5.3)
   reminderDays Json @default("[\"mon\",\"tue\",\"wed\",\"thu\",\"fri\",\"sat\",\"sun\"]") @map("reminder_days")
+
+  /// Pro feature — 8 AM (user's timezone) summary of yesterday's saves (PRD §3.7.2).
+  /// Added 2026-11-23: requires prisma/manual-migrations/20261123_add_morning_digest.sql
+  morningDigest Boolean @default(false) @map("morning_digest")
 
   timezone String @default("UTC")
 
@@ -241,7 +245,7 @@ model NotificationLog {
 
   sentAt DateTime @default(now()) @map("sent_at") @db.Timestamptz
 
-  /// "daily_reminder" | "trial_expiry_warning" | "trial_expiry_day" | "reengagement"
+  /// "daily_reminder" | "trial_expiry_warning" | "trial_expiry_day" | "reengagement" | "morning_digest"
   notificationType String @map("notification_type")
 
   /// UUID of the category featured in the notification — nullable

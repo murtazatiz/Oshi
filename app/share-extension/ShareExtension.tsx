@@ -38,7 +38,6 @@ import {
   syncSessionToAppGroup,
   type ShareProcessResult,
 } from '../src/services/shareExtension';
-import { apiClient } from '../src/services/apiClient';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants — use light-mode theme values directly

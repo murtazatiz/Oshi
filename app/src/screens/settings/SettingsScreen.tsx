@@ -37,20 +37,15 @@ import { useAuthStore } from '../../store/authStore';
 import { apiClient, getApiError, isLimitError } from '../../services/apiClient';
 import { openPaywall } from '../../services/paywall';
 import { ReminderSettings } from '../../components/ReminderSettings';
+import { useSavesActions, useSavesStore, type CategoryData } from '../../store/savesStore';
 import analytics, { optOutAnalytics, optInAnalytics, isOptedOut } from '../../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Category {
-  id: string;
-  name: string;
-  emoji: string;
-  save_count: number;
-  /** true for the 11 seeded defaults; only custom categories count toward the free limit */
-  is_system_default?: boolean;
-}
+/** Categories come from savesStore — the same list the Library tabs render. */
+type Category = CategoryData;
 
 /** PRD §8.1 — free users may create up to 3 custom categories on top of the 11 defaults */
 const FREE_CUSTOM_CATEGORY_LIMIT = 3;
@@ -79,7 +74,7 @@ function CategoryEditModal({
   const [emoji, setEmoji] = useState(cat?.emoji ?? '📌');
 
   useEffect(() => {
-    if (cat) { setName(cat.name); setEmoji(cat.emoji); }
+    if (cat) { setName(cat.name); setEmoji(cat.emoji ?? '📌'); }
   }, [cat]);
 
   if (!cat) return <></>;
@@ -222,7 +217,14 @@ export default function SettingsScreen(): React.JSX.Element {
 
 
   // ── Category state ────────────────────────────────────────────────────────
-  const [categories, setCategories] = useState<Category[]>([]);
+  const categories = useSavesStore((s) => s.categories);
+  const {
+    fetchCategories,
+    createCategory,
+    updateCategory,
+    deleteCategory,
+    moveCategory: moveCategoryInStore,
+  } = useSavesActions();
   const customCategoryCount = categories.filter((c) => c.is_system_default !== true).length;
   const isAtCategoryLimit = !isPro && customCategoryCount >= FREE_CUSTOM_CATEGORY_LIMIT;
   const [editingCat, setEditingCat] = useState<Category | null>(null);
@@ -249,12 +251,7 @@ export default function SettingsScreen(): React.JSX.Element {
   }, []);
 
   async function loadSettings(): Promise<void> {
-    try {
-      const catRes = await apiClient.get<{ categories: Category[] }>('/categories');
-      setCategories(catRes.data.categories);
-    } catch {
-      // Non-fatal: the list stays empty until the next load
-    }
+    await fetchCategories();
   }
 
 
@@ -268,8 +265,7 @@ export default function SettingsScreen(): React.JSX.Element {
 
   async function saveCategoryEdit(id: string, name: string, emoji: string): Promise<void> {
     try {
-      await apiClient.patch(`/categories/${id}`, { name, emoji });
-      setCategories((prev) => prev.map((c) => c.id === id ? { ...c, name, emoji } : c));
+      await updateCategory(id, { name, emoji });
       analytics.settingsCategoryRenamed();
     } catch {
       Alert.alert('Error', 'Could not update category.');
@@ -283,19 +279,17 @@ export default function SettingsScreen(): React.JSX.Element {
     }
     Alert.alert(
       `Delete ${cat.name}?`,
-      `All ${cat.save_count} saves in this category will move to Other.`,
+      `All ${cat.total_count} saves in this category will move to Other.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete', style: 'destructive',
           onPress: async () => {
             try {
-              await apiClient.delete(`/categories/${cat.id}`);
-              setCategories((prev) => prev.filter((c) => c.id !== cat.id));
+              await deleteCategory(cat.id);
               analytics.settingsCategoryDeleted();
             } catch (e: unknown) {
-              const msg = e instanceof Error ? e.message : 'Could not delete category.';
-              Alert.alert('Error', msg);
+              Alert.alert('Error', getApiError(e)?.message ?? 'Could not delete category.');
             }
           },
         },
@@ -313,24 +307,8 @@ export default function SettingsScreen(): React.JSX.Element {
   }
 
   async function moveCategory(index: number, direction: 'up' | 'down'): Promise<void> {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= categories.length) return;
-
-    const reordered = [...categories];
-    const temp = reordered[index]!;
-    reordered[index] = reordered[targetIndex]!;
-    reordered[targetIndex] = temp;
-
-    setCategories(reordered);
     analytics.settingsCategoryReordered();
-    try {
-      await apiClient.patch(`/categories/${temp.id}`, {
-        sort_order: targetIndex,
-      });
-    } catch {
-      // Non-fatal — revert optimistic update
-      setCategories(categories);
-    }
+    await moveCategoryInStore(index, direction);
   }
 
   // ── Account deletion ──────────────────────────────────────────────────────
@@ -394,10 +372,10 @@ export default function SettingsScreen(): React.JSX.Element {
             </TouchableOpacity>
           </View>
 
-          <Text style={catStyles.emoji}>{item.emoji}</Text>
+          <Text style={catStyles.emoji}>{item.emoji ?? '📌'}</Text>
           <View style={catStyles.info}>
             <Text style={[catStyles.name, { color: colors.textPrimary }]}>{item.name}</Text>
-            <Text style={[catStyles.count, { color: colors.textMuted }]}>{item.save_count} saves</Text>
+            <Text style={[catStyles.count, { color: colors.textMuted }]}>{item.total_count} saves</Text>
           </View>
           {item.name !== 'Other' && (
             <TouchableOpacity
@@ -619,11 +597,7 @@ export default function SettingsScreen(): React.JSX.Element {
                     const name = newCatName.trim();
                     if (!name) return;
                     try {
-                      const res = await apiClient.post<Category>('/categories', {
-                        name,
-                        emoji: '📌',
-                      });
-                      setCategories((prev) => [...prev, res.data]);
+                      await createCategory(name, '📌');
                       analytics.settingsCategoryCreated();
                       setNewCatVisible(false);
                     } catch (err) {

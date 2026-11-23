@@ -33,6 +33,8 @@ export interface CategoryData {
   sort_order: number;
   unread_count: number;
   total_count: number;
+  /** true for the 11 seeded defaults; only custom categories count toward the free limit */
+  is_system_default?: boolean;
 }
 
 export interface UndoEntry {
@@ -167,6 +169,15 @@ interface SavesState {
 
 interface SavesActions {
   fetchCategories: () => Promise<void>;
+  /**
+   * Category management (Settings). Each throws on API failure so the caller
+   * can show its own message (and detect the free-tier limit on create).
+   */
+  createCategory: (name: string, emoji: string) => Promise<CategoryData>;
+  updateCategory: (id: string, changes: { name: string; emoji: string }) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
+  /** Swap a category with its neighbour; optimistic, rolled back on failure. */
+  moveCategory: (index: number, direction: 'up' | 'down') => Promise<void>;
   /** Fetch ALL saves (no category filter). Only call on load, refresh, or after adding a save. */
   fetchSaves: (opts?: { refresh?: boolean }) => Promise<void>;
   /** Updates activeCategoryId and immediately re-derives the visible saves client-side — no API call. */
@@ -287,6 +298,61 @@ export const useSavesStore = create<SavesStore>((set, get) => {
       set({ categories: res.data.categories });
     } catch {
       // Silently fail — categories will remain as-is
+    }
+  },
+
+  async createCategory(name, emoji): Promise<CategoryData> {
+    const res = await apiClient.post<CategoryData>('/categories', { name, emoji });
+    set((s) => ({ categories: [...s.categories, res.data] }));
+    return res.data;
+  },
+
+  async updateCategory(id, { name, emoji }): Promise<void> {
+    await apiClient.patch(`/categories/${id}`, { name, emoji });
+    // Cards show the category name, so rename it on the saves too
+    set((s) => ({
+      categories: s.categories.map((c) => (c.id === id ? { ...c, name, emoji } : c)),
+      ...withDerivedSaves(
+        s,
+        s.allSaves.map((sv) => (sv.category?.id === id ? { ...sv, category: { id, name } } : sv)),
+      ),
+    }));
+  },
+
+  async deleteCategory(id): Promise<void> {
+    await apiClient.delete(`/categories/${id}`);
+    set((s) => ({
+      categories: s.categories.filter((c) => c.id !== id),
+      ...(s.activeCategoryId === id ? withDerivedSaves(s, s.allSaves, { activeCategoryId: null }) : {}),
+      ...(s.activeCategoryId === id ? { activeCategoryId: null } : {}),
+    }));
+    // The server moved this category's saves to "Other" — reload both lists
+    // so cards and tab counts reflect the move.
+    await Promise.all([get().fetchSaves({ refresh: true }), get().fetchCategories()]);
+  },
+
+  async moveCategory(index, direction): Promise<void> {
+    const before = get().categories;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    const moved = before[index];
+    const neighbour = before[targetIndex];
+    if (!moved || !neighbour) return;
+
+    // Swap the two rows' existing sort_order values (rather than writing list
+    // indexes) so every other category keeps its stored position.
+    const reordered = [...before];
+    reordered[index] = { ...neighbour, sort_order: moved.sort_order };
+    reordered[targetIndex] = { ...moved, sort_order: neighbour.sort_order };
+    set({ categories: reordered });
+
+    try {
+      await Promise.all([
+        apiClient.patch(`/categories/${moved.id}`, { sort_order: neighbour.sort_order }),
+        apiClient.patch(`/categories/${neighbour.id}`, { sort_order: moved.sort_order }),
+      ]);
+    } catch {
+      set({ categories: before });
+      void get().fetchCategories();
     }
   },
 
@@ -715,6 +781,10 @@ export function useSavesActions() {
   return useSavesStore(
     useShallow((s) => ({
       fetchCategories: s.fetchCategories,
+      createCategory: s.createCategory,
+      updateCategory: s.updateCategory,
+      deleteCategory: s.deleteCategory,
+      moveCategory: s.moveCategory,
       fetchSaves: s.fetchSaves,
       setActiveCategory: s.setActiveCategory,
       setSearchQuery: s.setSearchQuery,

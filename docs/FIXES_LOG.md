@@ -52,6 +52,27 @@ Entry template:
 - **Verified by:** `cd backend && npm run lint` → 0 errors · TC-CAT-01.
 - **Commit:** see `git log` for 2026-11-23 · **Related:** ADR-0019. **Flag for product:** confirm "3 custom categories" is the intended rule and correct PRD §8.1's wording.
 
+### FIX-20261123-03 — `oshi://settings/reminders` opened a placeholder screen
+- **Area:** app · **Severity:** bug
+- **Symptom:** The Reminders deep link (and its route) rendered a "Reminder Settings" placeholder; the real editor only existed inline in Settings.
+- **Fix:** The editor (permission, time, days, Morning Digest, load/save) moved out of `SettingsScreen` into `components/ReminderSettings.tsx`, which both Settings and `RemindersScreen` render, so the two can't drift. The code was moved, not rewritten; Settings lost ~340 lines.
+- **Verified by:** `cd app && npx tsc --noEmit` → 0 errors · TC-NOTIF-07.
+- **Commit:** see the 2026-11-23 follow-up commit on PR #3.
+
+### FIX-20261123-04 — Morning Digest toggle was never saved, and nothing sent a digest
+- **Area:** backend + app · **Severity:** bug (Pro feature missing)
+- **Symptom:** The Pro "Morning Digest" switch reset on every visit and no digest push ever existed. The app already read `morning_digest` from `/users/me`, but the backend never returned it and the save never sent it.
+- **Fix:** New `users.morning_digest` column (Prisma `morningDigest`, default false). `PATCH /notifications/settings` accepts `morning_digest` and returns 403 when a free user tries to enable it. `/users/me` returns it. The reminder editor sends it for Pro users. A new cron (`startMorningDigestScheduler`, every minute) sends "Your morning digest ☀️" at **08:00 in each user's own timezone**, to Pro/trial users with the toggle on, summarising the saves from their previous local day. Users who saved nothing get no push. Downgraded users stop receiving it because the cron checks the plan. Logged as `notification_type = 'morning_digest'`.
+- **⚠ Deploy order:** run `backend/prisma/manual-migrations/20261123_add_morning_digest.sql` in Supabase **before** deploying this backend. Prisma names every model column, so all `users` queries fail until the column exists. The same script widens the `notification_logs.notification_type` CHECK constraint to allow `morning_digest`. See ADR-0020.
+- **Verified by:** backend tsc · the clock helper tested against Asia/Kolkata (+5:30), America/New_York (EST and EDT), UTC, an invalid zone (UTC fallback), and midnight-reads-as-0 · TC-NOTIF-05, TC-NOTIF-06.
+- **Commit:** see the 2026-11-23 follow-up commit on PR #3.
+
+### FIX-20261123-05 — Day-5 soft upsell banner (PRD §8.3) didn't exist
+- **Area:** backend + app · **Severity:** missing feature (monetization)
+- **Fix:** `/users/me` returns `upsell_banner_due` when the plan is `free` and the account is ≥ 5 days old. Every signup starts a 7-day trial, so in practice this is every user whose trial has ended. The Library shows "You're on the free plan — get unlimited saves with Oshi Pro" with **See Pro** (opens the paywall with trigger `upsell_banner`) and ✕, which snoozes it for 7 days (AsyncStorage). It never shows alongside the trial-expiry banner.
+- **Verified by:** both tsc · TC-SUB-08.
+- **Commit:** see the 2026-11-23 follow-up commit on PR #3.
+
 ---
 
 ## 2026-09-18 (session 17:15–17:35 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
@@ -236,3 +257,4 @@ Entry template:
 | 1.0 | 2026-09-18 17:32 | Initial log: 2026-09-18 session fixes + retroactive PR #2 entry. |
 | 1.1 | 2026-09-18 18:20 | Second wave (FIX-11…20) from the deep exploration pass. |
 | 1.2 | 2026-11-23 04:11 | Paywall wiring (FIX-20261123-01) and custom-category limit (FIX-20261123-02). |
+| 1.3 | 2026-11-23 04:23 | Reminders screen, Morning Digest persistence + sender, day-5 upsell banner (FIX-20261123-03…05). |

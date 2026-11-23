@@ -120,6 +120,8 @@ Root gate: `Main` renders only when `session !== null` **AND** `onboardingStore.
 - Monthly cron `0 0 1 * *` resets every user's `items_saved_this_month` to 0.
 - Nightly 02:00 UTC dead-link checker updates `link_status`.
 - Trial-expiry pushes are scheduled through the delayed `notification-scheduler` queue.
+- **Morning Digest** (Pro, opt-in via `PATCH /notifications/settings { morning_digest }`, 403 for free users): a cron checks every minute for Pro/trial users with the toggle on whose local time (`users.timezone`) is 08:00, and pushes a summary of what they saved during their previous local day. Nothing is sent if they saved nothing. Logged as `morning_digest`.
+- The reminder editor is one component (`components/ReminderSettings`), rendered both inline in Settings and as the `oshi://settings/reminders` screen.
 
 ## 9. Monetization rules
 
@@ -127,13 +129,13 @@ Root gate: `Main` renders only when `session !== null` **AND** `onboardingStore.
 |------|-------|-------------------|--------|
 | Free | 20/month | 3 | basic reminders |
 | Trial (7d, auto on signup) | unlimited | unlimited | all Pro |
-| Pro | unlimited | unlimited | priority AI queue, morning digest*, per-category reminders* |
+| Pro | unlimited | unlimited | priority AI queue, morning digest, per-category reminders* |
 
-*digest & per-category reminders are partially implemented — see context.md §9.
+*per-category reminder overrides are not implemented yet — see context.md §9.
 
 **Custom categories:** the free limit is 3 categories the user *creates*; the 11 seeded defaults are `is_system_default = true` and never count (ADR-0019).
 
-**Paywall** (ADR-0018): every trigger goes through `services/paywall.ts openPaywall(trigger)`. The two limit codes (`SAVE_LIMIT_REACHED`, `CATEGORY_LIMIT_REACHED`, both 403) open it automatically from `apiClient`'s response interceptor, and the request still rejects so the caller can react: Import stops the batch, the share sheet shows a limit message instead of queueing, and Settings closes its new-category sheet. Other triggers are Settings → Upgrade to Pro, the Morning Digest toggle for free users, the trial-banner CTA, and the Subscription screen. It never opens twice, never before navigation mounts, and never for background requests marked `skipPaywall` (offline-queue flushes, whose over-limit items stay queued until an upgrade or the monthly reset). The headline matches the trigger, and PostHog `paywall_viewed` records it. Not yet built: the PRD's day-5 soft-upsell banner. Payments entirely via RevenueCat (webhook updates `subscription_status`); downgrade **preserves all content**, only blocks new saves/categories beyond free limits. Signup seeds **11 default categories** and starts the trial. Streaks are Duolingo-style hard reset.
+**Paywall** (ADR-0018): every trigger goes through `services/paywall.ts openPaywall(trigger)`. The two limit codes (`SAVE_LIMIT_REACHED`, `CATEGORY_LIMIT_REACHED`, both 403) open it automatically from `apiClient`'s response interceptor, and the request still rejects so the caller can react: Import stops the batch, the share sheet shows a limit message instead of queueing, and Settings closes its new-category sheet. Other triggers are Settings → Upgrade to Pro, the Morning Digest toggle for free users, the trial-banner CTA, and the Subscription screen. It never opens twice, never before navigation mounts, and never for background requests marked `skipPaywall` (offline-queue flushes, whose over-limit items stay queued until an upgrade or the monthly reset). The headline matches the trigger, and PostHog `paywall_viewed` records it. **Day-5 soft upsell:** `/users/me` sets `upsell_banner_due` for free accounts ≥ 5 days old (in practice, every user whose trial ended). The Library banner opens the paywall with trigger `upsell_banner`, and dismissing it snoozes it for 7 days. Payments entirely via RevenueCat (webhook updates `subscription_status`); downgrade **preserves all content**, only blocks new saves/categories beyond free limits. Signup seeds **11 default categories** and starts the trial. Streaks are Duolingo-style hard reset.
 
 ## 10. Performance targets (PRD §10)
 
@@ -156,3 +158,4 @@ Root gate: `Main` renders only when `session !== null` **AND** `onboardingStore.
 | 1.0 | 2026-09-18 17:32 | Initial behaviour reference. |
 | 1.1 | 2026-09-18 18:35 | Restore endpoint, uniform invalidation contract, purge-job caveat. |
 | 1.2 | 2026-11-23 04:11 | Paywall wiring and the custom-category limit. |
+| 1.3 | 2026-11-23 04:23 | Morning Digest, shared reminder editor, day-5 upsell banner. |

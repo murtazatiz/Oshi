@@ -50,6 +50,8 @@ flowchart LR
 1. Cron matches HH:MM + weekday; skips if zero unread or app opened <2h ago.
 2. Notification names the category with most unread; tapping deep-links `oshi://library/:categorySlug` straight to that tab; the open is logged.
 
+**Variant — Morning Digest (Pro):** at 08:00 in the user's timezone, Pro users who opted in get a summary of yesterday's saves, which opens the Library (TC-NOTIF-05). Reminder settings are reachable inline in Settings or directly via `oshi://settings/reminders` (TC-NOTIF-07).
+
 **Outcome:** user lands exactly on the pile they meant to get back to.
 
 ## J5 — Triaging the Library
@@ -85,7 +87,7 @@ Create (free tier: max 3 custom → paywall), rename, re-emoji, delete (**saves 
 
 ## J9 — Hitting a limit → upgrading
 
-**Trigger:** 21st save in a month, 4th custom category (the 11 defaults don't count), the Settings upgrade row, a Pro-only toggle, or the trial-expiry banner. **Covers:** TC-SUB-01…07, TC-CAT-01, TC-IMP-03.
+**Trigger:** 21st save in a month, 4th custom category (the 11 defaults don't count), the Settings upgrade row, a Pro-only toggle, the trial-expiry banner, or the day-5 upsell banner on the Library (free plan, TC-SUB-08). **Covers:** TC-SUB-01…07, TC-CAT-01, TC-IMP-03.
 
 1. Backend rejects with a typed 403 → `apiClient` opens the Paywall with a trigger-specific headline ("You've used all 20 saves this month"). The surface the user was on reacts too: Save URL shows the limit message, Import stops and reports how many weren't imported, the share sheet says the limit was reached (and doesn't queue).
 2. User picks monthly/annual → RevenueCat purchase sheet → on success the paywall closes itself.
@@ -148,3 +150,4 @@ Session restored from SecureStore → JWT synced to App Group → RevenueCat/Pos
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial journey catalogue (J1–J13). |
 | 1.1 | 2026-11-23 04:11 | J9 rewritten for the wired paywall. |
+| 1.2 | 2026-11-23 04:23 | J4 Morning Digest variant; J9 upsell-banner trigger. |

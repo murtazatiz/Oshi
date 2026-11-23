@@ -134,6 +134,9 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | TC-NOTIF-02 | P1 | e2e | Skip rules | (a) zero unread; (b) app opened <2h before reminder time | No push in either case |
 | TC-NOTIF-03 | P0 | e2e | Notification deep link selects the tab | Tap the reminder push (e.g. `oshi://library/business`) | App opens the Library **with the Business tab selected** (slug matched against category names; `GET /categories` payloads now carry `slug`); open logged via `/notifications/log-open`. **Regression guard for FIX-20260918-17** (the slug used to be dropped) |
 | TC-NOTIF-04 | P2 | e2e | Monthly reset | On the 1st (UTC) or by manually running the cron | Every user's `items_saved_this_month` = 0; free users can save again |
+| TC-NOTIF-05 | P1 | e2e | Morning Digest delivery | Pro user, digest on, push token set, `timezone` = e.g. `Asia/Kolkata`; save 3 items one day; wait for 08:00 local the next day. Repeat with a user who saved nothing yesterday | First user gets *"Your morning digest ☀️ — Yesterday you saved 3 items — including \"…\""* at 08:00 **local** (02:30 UTC for Kolkata), deep-linking to the Library, and a `notification_logs` row with type `morning_digest`. Second user gets nothing. A user downgraded to free gets nothing. **Requires the 2026-11-23 manual migration** |
+| TC-NOTIF-06 | P1 | api | Morning Digest is Pro-only and persists | As Pro: toggle on in Settings → Save Reminders → leave and reopen Settings. As free: `PATCH /notifications/settings {"morning_digest": true}` | Pro: the toggle is still on after reopening, and `GET /users/me` has `morning_digest: true`. Free: the request gets 403 `FORBIDDEN`; in the app the switch opens the paywall instead |
+| TC-NOTIF-07 | P1 | app | Reminders screen | Open `oshi://settings/reminders` | A real "Daily Reminder" screen with a back button (no placeholder), showing the same values as Settings → Daily Reminder; a change saved on either is reflected on the other after reopening |
 
 ## 11 · Subscription & paywall
 
@@ -142,6 +145,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | TC-SUB-01 | P0 | app | Paywall triggers | As a free user: (a) 21st save via the Save URL modal; (b) 4th custom category in Settings; (c) Settings → Upgrade to Pro; (d) toggle Morning Digest; (e) trial banner → Upgrade Now (as a trial user on expiry day) | Paywall opens every time with the matching headline: (a) "You've used all 20 saves this month" — the Save URL modal also shows the backend's limit message underneath; (b) "You've reached 3 custom categories" — the new-category sheet closes so it can't hide the paywall; (c, d) "Upgrade to Oshi Pro"; (e) "Your Pro trial is ending". PostHog `paywall_viewed` carries the matching `trigger`. **Regression guard for FIX-20261123-01** |
 | TC-SUB-05 | P0 | app | Share-sheet limit | As a free user at 20/20, share a link into Oshi from another app | Share card shows *"Monthly save limit reached — upgrade to keep saving"* (not "Queued — will save when back online"); the URL is **not** put in the offline queue; when the card auto-dismisses, the paywall is open beneath it |
 | TC-SUB-06 | P1 | app | Background flush never pops the paywall | Free user at 20/20 with saves already in the offline queue → background and foreground the app twice | The queue flush hits 403 silently (`skipPaywall`): **no** paywall appears, the items stay queued, and they go through after an upgrade or the 1st-of-month reset |
+| TC-SUB-08 | P1 | app | Day-5 upsell banner | A free-plan account ≥ 5 days old (trial over) opens the Library; tap ✕; reopen the app; then (or with a fresh dismissal) tap **See Pro** | The banner *"You're on the free plan — get unlimited saves with Oshi Pro"* shows. ✕ hides it and it stays hidden across app restarts for 7 days. See Pro opens the paywall headed *"Get more out of Oshi"* (`paywall_viewed` trigger `upsell_banner`). Never shown to trial/Pro users or alongside the trial-expiry banner |
 | TC-SUB-07 | P1 | app | Subscription settings screen | Open `oshi://settings/subscription` (or tap a trial-expiry push) as free, trial, pro, and cancelled users | Real screen (no placeholder): shows the current plan; free/trial/cancelled get an upgrade button → paywall; pro/cancelled get **Manage subscription** → the App Store / Play Store subscriptions page; Restore purchases works for all |
 | TC-SUB-02 | P0 | api | Webhook auth | POST `/subscriptions/webhook` without / with wrong / with correct `REVENUECAT_WEBHOOK_AUTH_HEADER` | Unauthorized rejected; correct secret updates `subscription_status` per event |
 | TC-SUB-03 | P1 | e2e | Upgrade unlocks | Complete a (sandbox) purchase | Status → pro; saves beyond 20 succeed; new AI jobs route to the priority queue (observe faster completion) |
@@ -186,13 +190,13 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | Categories 7 | 5 | J8 |
 | Import 8 | 3 | J7 |
 | Offline 9 | 4 | J3 |
-| Notifications 10 | 4 | J4 |
-| Subscription 11 | 7 | J9 |
+| Notifications 10 | 7 | J4 |
+| Subscription 11 | 8 | J9 |
 | Engagement 12 | 2 | J11 |
 | Security 13 | 5 | — |
 | Deep links 14 | 1 | J4, J12 |
 
-**Total: 71 cases (P0: 25 · P1: 36 · P2: 10 — plus the gate).**
+**Total: 75 cases (P0: 25 · P1: 40 · P2: 10 — plus the gate).**
 
 > Paywall wiring landed 2026-11-23 (FIX-20261123-01); TC-SUB-01 is no longer known-blocked.
 >
@@ -204,4 +208,5 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial catalogue: 64 cases across 15 areas. |
 | 1.1 | 2026-09-18 18:30 | +4 regression cases for the wave-2 fixes (AUTH-07, LIB-09, SORT-05, CAT-05); AUTH-01/03, ACT-03, NOTIF-03 sharpened; paywall known-blocked note. |
+| 1.3 | 2026-11-23 04:23 | +NOTIF-05/06/07 (Morning Digest delivery & persistence, Reminders screen), +SUB-08 (day-5 upsell banner). |
 | 1.2 | 2026-11-23 04:11 | Paywall wiring: SUB-01 rewritten per trigger; +SUB-05/06/07; CAT-01 and IMP-03 (now P1) rewritten for the custom-category rule and stop-at-limit import; known-blocked note replaced by a dev-data prerequisite. |

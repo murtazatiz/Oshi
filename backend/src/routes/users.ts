@@ -352,7 +352,9 @@ router.post(
 // Notes:
 //   - Supabase JWTs expire after 1 hour — no explicit session revocation needed
 //     for the MVP. The mobile app clears SecureStore on receiving this response.
-//   - A nightly cron job permanently purges rows where deleted_at < NOW() - 30 days.
+//   - The nightly purge (services/purgeService.ts) permanently removes the user,
+//     all their rows, their avatar and their Supabase Auth account once
+//     deleted_at < NOW() - 30 days.
 //   - Users who sign in within the 30-day window are offered account restoration
 //     (PRD §3.7.5 — handled by the auth flow, not this endpoint).
 // ─────────────────────────────────────────────────────────────────────────────

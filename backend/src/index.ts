@@ -25,6 +25,7 @@ import {
   startDailyReminderScheduler,
   startMonthlySaveCountReset,
   startMorningDigestScheduler,
+  startNightlyPurge,
   stopSchedulers,
 } from './cron/scheduler';
 
@@ -123,6 +124,7 @@ startDeadLinkChecker();
 startDailyReminderScheduler();
 startMonthlySaveCountReset();
 startMorningDigestScheduler();
+startNightlyPurge();
 
 const server = app.listen(PORT, () => {
   const env = process.env.APP_ENV ?? process.env.NODE_ENV ?? 'development';

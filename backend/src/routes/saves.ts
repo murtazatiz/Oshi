@@ -546,7 +546,7 @@ router.patch(
 // DELETE /saves/:id — soft delete (sets deleted_at = NOW())
 //
 // Record is excluded from all GET queries immediately.
-// Permanently purged after 7 days by a nightly cron job.
+// Permanently purged after 7 days by the nightly purge (services/purgeService.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 router.delete(
   '/:id',

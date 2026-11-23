@@ -7,6 +7,7 @@ import {
   UTC_DAY_NAMES,
 } from '../services/notificationService';
 import { Sentry } from '../services/sentry';
+import { purgeDeletedSaves, purgeDeletedUsers } from '../services/purgeService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level task handles — used by stopSchedulers()
@@ -15,6 +16,7 @@ import { Sentry } from '../services/sentry';
 let dailyReminderTask: cron.ScheduledTask | null = null;
 let monthlyResetTask: cron.ScheduledTask | null = null;
 let morningDigestTask: cron.ScheduledTask | null = null;
+let nightlyPurgeTask: cron.ScheduledTask | null = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -376,6 +378,35 @@ export function startMorningDigestScheduler(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Nightly purge — 03:00 UTC (after the 02:00 dead-link check)
+//
+// Permanently removes saves soft-deleted > 7 days ago and users soft-deleted
+// > 30 days ago (PRD §3.7.5). See services/purgeService.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function startNightlyPurge(): void {
+  nightlyPurgeTask = cron.schedule(
+    '0 3 * * *',
+    async () => {
+      try {
+        const savesPurged = await purgeDeletedSaves();
+        const { purged, failed } = await purgeDeletedUsers();
+        console.info(
+          `[purge] Removed ${savesPurged} save(s) and ${purged} user(s)` +
+            (failed > 0 ? ` (${failed} user purge(s) failed — retried next run)` : ''),
+        );
+      } catch (err) {
+        console.error('[purge] Error:', err);
+        Sentry.captureException(err);
+      }
+    },
+    { timezone: 'UTC' },
+  );
+
+  console.info('[scheduler] Nightly purge cron started (03:00 UTC)');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Stop all cron tasks — called during graceful shutdown
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -383,5 +414,6 @@ export function stopSchedulers(): void {
   dailyReminderTask?.stop();
   monthlyResetTask?.stop();
   morningDigestTask?.stop();
+  nightlyPurgeTask?.stop();
   console.info('[scheduler] All cron tasks stopped');
 }

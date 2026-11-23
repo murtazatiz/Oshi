@@ -34,7 +34,7 @@ Entry template:
   5. `PaywallScreen` reads its `trigger` param, shows the matching headline ("You've used all 20 saves this month", …), and sends the real trigger to PostHog `paywall_viewed` (was hardcoded `'direct'`).
   6. `SubscriptionScreen` (deep-link target of `oshi://settings/subscription` and trial-expiry pushes) replaced its placeholder with current plan, upgrade, Manage subscription (store page), and restore.
 - **Verified by:** `cd app && npx tsc --noEmit` → 0 errors · TC-SUB-01, TC-SUB-05, TC-SUB-06, TC-SUB-07, TC-IMP-03.
-- **Commit:** see `git log` for 2026-11-23 · **Related:** ADR-0018.
+- **Commit:** `8a45a69` · **Related:** ADR-0018.
 
 ### FIX-20261123-02 — Free users could never create a category
 - **Area:** backend + app · **Severity:** bug (business rule)
@@ -50,14 +50,14 @@ Entry template:
   ```
   Caveat: this also flags any *custom* category a dev user happened to create with one of those names.
 - **Verified by:** `cd backend && npm run lint` → 0 errors · TC-CAT-01.
-- **Commit:** see `git log` for 2026-11-23 · **Related:** ADR-0019. **Flag for product:** confirm "3 custom categories" is the intended rule and correct PRD §8.1's wording.
+- **Commit:** `8a45a69` · **Related:** ADR-0019. **Flag for product:** confirm "3 custom categories" is the intended rule and correct PRD §8.1's wording.
 
 ### FIX-20261123-03 — `oshi://settings/reminders` opened a placeholder screen
 - **Area:** app · **Severity:** bug
 - **Symptom:** The Reminders deep link (and its route) rendered a "Reminder Settings" placeholder; the real editor only existed inline in Settings.
 - **Fix:** The editor (permission, time, days, Morning Digest, load/save) moved out of `SettingsScreen` into `components/ReminderSettings.tsx`, which both Settings and `RemindersScreen` render, so the two can't drift. The code was moved, not rewritten; Settings lost ~340 lines.
 - **Verified by:** `cd app && npx tsc --noEmit` → 0 errors · TC-NOTIF-07.
-- **Commit:** see the 2026-11-23 follow-up commit on PR #3.
+- **Commit:** `6b5ca0b`.
 
 ### FIX-20261123-04 — Morning Digest toggle was never saved, and nothing sent a digest
 - **Area:** backend + app · **Severity:** bug (Pro feature missing)
@@ -65,13 +65,13 @@ Entry template:
 - **Fix:** New `users.morning_digest` column (Prisma `morningDigest`, default false). `PATCH /notifications/settings` accepts `morning_digest` and returns 403 when a free user tries to enable it. `/users/me` returns it. The reminder editor sends it for Pro users. A new cron (`startMorningDigestScheduler`, every minute) sends "Your morning digest ☀️" at **08:00 in each user's own timezone**, to Pro/trial users with the toggle on, summarising the saves from their previous local day. Users who saved nothing get no push. Downgraded users stop receiving it because the cron checks the plan. Logged as `notification_type = 'morning_digest'`.
 - **⚠ Deploy order:** run `backend/prisma/manual-migrations/20261123_add_morning_digest.sql` in Supabase **before** deploying this backend. Prisma names every model column, so all `users` queries fail until the column exists. The same script widens the `notification_logs.notification_type` CHECK constraint to allow `morning_digest`. See ADR-0020.
 - **Verified by:** backend tsc · the clock helper tested against Asia/Kolkata (+5:30), America/New_York (EST and EDT), UTC, an invalid zone (UTC fallback), and midnight-reads-as-0 · TC-NOTIF-05, TC-NOTIF-06.
-- **Commit:** see the 2026-11-23 follow-up commit on PR #3.
+- **Commit:** `6b5ca0b`.
 
 ### FIX-20261123-05 — Day-5 soft upsell banner (PRD §8.3) didn't exist
 - **Area:** backend + app · **Severity:** missing feature (monetization)
 - **Fix:** `/users/me` returns `upsell_banner_due` when the plan is `free` and the account is ≥ 5 days old. Every signup starts a 7-day trial, so in practice this is every user whose trial has ended. The Library shows "You're on the free plan — get unlimited saves with Oshi Pro" with **See Pro** (opens the paywall with trigger `upsell_banner`) and ✕, which snoozes it for 7 days (AsyncStorage). It never shows alongside the trial-expiry banner.
 - **Verified by:** both tsc · TC-SUB-08.
-- **Commit:** see the 2026-11-23 follow-up commit on PR #3.
+- **Commit:** `6b5ca0b`.
 
 ---
 
@@ -164,7 +164,7 @@ Entry template:
 - **Root cause:** Three-way endpoint mismatch. The contract says `POST /auth/reset-password {email}`; the app conformed (`reset-password {email}`, then `update-password {token,new_password}`); the backend served the email step at `/auth/forgot-password` and the token step at `/auth/reset-password` — so the app's email call hit the token endpoint (422) and its token call hit nothing (404).
 - **Fix:** Backend renamed to match contract + app: `/auth/reset-password {email}` sends the email, `/auth/update-password {token,new_password}` sets the password. The app needed **zero changes**. `/auth/update-password` documented in API_CONTRACT §2 (it was missing entirely).
 - **Verified by:** backend tsc · TC-AUTH-03.
-- **Commit:** wave-2 commit · **Related:** ARCHITECTURE_REVIEW addendum A1.
+- **Commit:** `de01516` · **Related:** ARCHITECTURE_REVIEW addendum A1.
 
 ### FIX-20260918-12 — Rendering a Facebook save crashed the app
 - **Area:** app · **Severity:** bug
@@ -172,7 +172,7 @@ Entry template:
 - **Root cause:** The app's `Platform_` union and BOTH copy-pasted `PLATFORM_META` maps (OshiCard, ContentDetailScreen) omitted `facebook`, and lookups indexed the map unguarded. A third diverged copy (ShareHandlerScreen's detect + labels) also lacked it.
 - **Fix:** New `app/src/constants/platforms.ts` — single `Platform` type (with facebook), one `PLATFORM_META`, total `getPlatformMeta()` accessor (unknown → 'other' badge), and `detectPlatformFromUrl` mirroring the backend detector. All three files consume it; the triplication is gone.
 - **Verified by:** app tsc · TC-LIB-09 (new).
-- **Commit:** wave-2 commit · **Related:** ADR-0016.
+- **Commit:** `de01516` · **Related:** ADR-0016.
 
 ### FIX-20260918-13 — Undo-after-delete could never restore the save
 - **Area:** backend + app · **Severity:** bug
@@ -180,14 +180,14 @@ Entry template:
 - **Root cause:** Undo issued `PATCH /saves/:id`, but every route (correctly) filters `deletedAt: null`, so the PATCH 404'd and the store's rollback removed the card again. No endpoint could clear a soft delete.
 - **Fix:** New `POST /saves/:id/restore` clears `deleted_at` (status/timestamps were untouched by delete, so the save returns exactly as it was) and invalidates the smart-sort cache; `savesStore.undoAction` uses it for the deleted path. Documented in API_CONTRACT §3.
 - **Verified by:** both tsc · TC-ACT-03.
-- **Commit:** wave-2 commit.
+- **Commit:** `de01516`.
 
 ### FIX-20260918-14 — Worker never invalidated the smart-sort cache after classification
 - **Area:** backend · **Severity:** bug
 - **Symptom:** After AI moved a save from "Other" to its real category, the cached AI-recommended order for both categories stayed stale up to 1h — the same defect family as FIX-20260918-01, on the worker leg.
 - **Fix:** `aiProcessor` now selects the pre-classification `categoryId` and calls `invalidateSmartSortCache(userId, oldCategoryId, newCategoryId)` after the complete-update. The invalidation contract (POST/PATCH/DELETE/restore/worker) is now uniform everywhere a save's presence, status, or category changes.
 - **Verified by:** backend tsc · TC-SORT-05 (new).
-- **Commit:** wave-2 commit.
+- **Commit:** `de01516`.
 
 ### FIX-20260918-15 — Seeded default categories contradicted the PRD
 - **Area:** backend · **Severity:** bug (business rule)
@@ -195,27 +195,27 @@ Entry template:
 - **Root cause:** Two hardcoded lists (auth.ts seeding, aiService fallback) with no shared source.
 - **Fix:** New `backend/src/constants/defaultCategories.ts` (PRD names + emojis, "Other" last/system) consumed by both. Per CLAUDE.md, PRD wins on business logic. Existing users' categories are untouched — this affects new signups.
 - **Verified by:** backend tsc · TC-AUTH-01 (expected list updated).
-- **Commit:** wave-2 commit.
+- **Commit:** `de01516`.
 
 ### FIX-20260918-16 — Signin error code drifted from the contract
 - **Area:** backend · **Severity:** correctness-hazard
 - **Fix:** `POST /auth/signin` wrong-credentials now returns `INVALID_CREDENTIALS` (contract §2) instead of `UNAUTHORISED`; code added to the `ErrorCode` union. Clients matching on the code can now do so per contract.
 - **Verified by:** backend tsc · TC-AUTH-07 (new).
-- **Commit:** wave-2 commit.
+- **Commit:** `de01516`.
 
 ### FIX-20260918-17 — Reminder deep link dropped its category (tab never selected)
 - **Area:** backend + app · **Severity:** bug
 - **Symptom:** Tapping a daily-reminder push (`oshi://library/business`) opened the Library on "All" — the slug param was parsed by navigation but read by nothing; `CategoryData.slug` was typed in the app yet never returned by the backend.
 - **Fix:** `formatCategory` now emits `slug` (same `slugifyCategoryName` formula the notifications use); HomeScreen reads `route.params.categorySlug` and selects the matching tab once categories load.
 - **Verified by:** both tsc · TC-NOTIF-03, TC-DEEP-01.
-- **Commit:** wave-2 commit.
+- **Commit:** `de01516`.
 
 ### FIX-20260918-18 — Two parallel sources of session truth
 - **Area:** app · **Severity:** correctness-hazard
 - **Symptom:** AppNavigator's private `useAuthSession` ran its own `getSession()` + `onAuthStateChange` listener alongside `authStore.initialise()`'s pair — two subscriptions, two session states that could disagree (e.g. during sign-out edge timing).
 - **Fix:** RootNavigator now selects `session`/`isInitialised` from authStore (which App.tsx initialises on mount); the duplicate hook and its listener are gone. Also replaced the `React.createElement(require('react-native').Text, …)` TabIcon hack with a plain imported `Text`.
 - **Verified by:** app tsc · TC-AUTH-05.
-- **Commit:** wave-2 commit · **Related:** ADR-0017.
+- **Commit:** `de01516` · **Related:** ADR-0017.
 
 ### FIX-20260918-19 — Backend duplication collapsed (webhook handlers, reminder blocks, social fetchers, category formatter)
 - **Area:** backend · **Severity:** hygiene
@@ -225,7 +225,7 @@ Entry template:
   3. `metadataService`: identical `fetchLinkedIn`/`fetchFacebook` → one `fetchWithBrowserHeaders(url, platform, fallbackThumb)`.
   4. `categories.ts` `formatCategory`: dead both-branches ternary now follows the omit-null convention; `PATCH /categories/:id` returns **real** unread/total counts (was hardcoded `0/0` even for populated categories); `aiService.buildSystemPrompt` no longer mutates the caller's array.
 - **Verified by:** backend tsc · TC-SUB-02, TC-NOTIF-01, TC-CAT-05 (new).
-- **Commit:** wave-2 commit.
+- **Commit:** `de01516`.
 
 ### FIX-20260918-20 — App dead weight removed (state, deps, files, assets) + shared URL predicate
 - **Area:** app · **Severity:** hygiene
@@ -236,7 +236,7 @@ Entry template:
   4. URL validation written inline three times (SaveUrlScreen, ImportScreen ×2) → `utils/url.ts isValidHttpUrl`.
   5. CLAUDE.md's stale claim that draggable-flatlist is used was corrected.
 - **Verified by:** app tsc · TC-GATE-01.
-- **Commit:** wave-2 commit.
+- **Commit:** `de01516`.
 
 ---
 

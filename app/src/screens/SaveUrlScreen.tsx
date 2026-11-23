@@ -30,7 +30,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 
 import { useTheme } from '../theme/ThemeContext';
-import { apiClient } from '../services/apiClient';
+import { apiClient, getApiError } from '../services/apiClient';
 import type { MainStackParamList } from '../navigation/types';
 import { useSavesStore } from '../store/savesStore';
 import { isValidHttpUrl } from '../utils/url';
@@ -137,9 +137,9 @@ export default function SaveUrlScreen(): React.JSX.Element {
     } catch (err: unknown) {
       setSaveState('error');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const message =
-        err instanceof Error ? err.message : 'Something went wrong. Please try again.';
-      setErrorMsg(message);
+      // A limit error has already opened the paywall (apiClient interceptor);
+      // the backend's message explains why this save didn't go through.
+      setErrorMsg(getApiError(err)?.message ?? 'Something went wrong. Please try again.');
     }
   }
 

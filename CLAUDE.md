@@ -170,7 +170,7 @@ src/
   components/   OshiCard, CategoryTabs, StreakDisplay, UndoToast, *SkeletonCard, etc.
   store/        Zustand: authStore, savesStore, onboardingStore, subscriptionStore
   services/     apiClient (axios), supabase, analytics, errorMonitoring, purchases,
-                offlineQueue, shareExtension
+                offlineQueue, shareExtension, realtime, paywall
   lib/          supabase.ts (re-export for back-compat)
   theme/        index.ts (design tokens), ThemeContext.tsx (light/dark)
   utils/        thumbnailCache.ts
@@ -200,7 +200,12 @@ is exported for navigating outside the React tree.
 - `services/apiClient.ts` — axios instance, base URL from
   `EXPO_PUBLIC_API_BASE_URL`. A request interceptor attaches the current
   Supabase JWT; a response interceptor does a **single silent refresh on 401**
-  (queuing concurrent requests), and signs out if refresh fails.
+  (queuing concurrent requests), and signs out if refresh fails. It also opens
+  the paywall on `SAVE_LIMIT_REACHED` / `CATEGORY_LIMIT_REACHED` (via
+  `services/paywall.ts openPaywall`, the single entry point for every paywall
+  trigger) and still rejects. Background callers of a limited endpoint must pass
+  `{ skipPaywall: true }` (the offline-queue flush does). Read error envelopes
+  with `getApiError()` / `isLimitError()` rather than `err.message`.
 - `services/supabase.ts` is the canonical Supabase client. JWTs are stored in
   **Expo SecureStore only** (key `oshi_session`) via a custom storage adapter —
   never AsyncStorage. The client uses the **anon** key (`EXPO_PUBLIC_*`).
@@ -225,7 +230,8 @@ colours/sizes. Light/dark is provided via `ThemeContext`.
 
 ## Key business rules (don't break these)
 - Free tier: 20 saves/month (enforced atomically in `POST /saves`), 3 custom
-  categories. Pro/trial bypass both.
+  categories: rows with `is_system_default = false`; the 11 seeded defaults
+  never count (ADR-0019). Pro/trial bypass both.
 - New signups get **11 default categories** + `trial_started_at = NOW()`.
 - Save status: `unread` → `done` (sets `done_at`) / `skipped` (sets `skipped_at`);
   reverting to `unread` clears both.

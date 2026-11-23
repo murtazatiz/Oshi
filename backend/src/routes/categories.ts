@@ -8,6 +8,9 @@ import { slugifyCategoryName } from '../services/notificationService';
 import type { Prisma } from '@prisma/client';
 
 const router = Router();
+
+/** PRD §8.1 — custom categories a free user may create beyond the defaults */
+const FREE_CUSTOM_CATEGORY_LIMIT = 3;
 router.use(requireAuth);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,9 +153,14 @@ router.post(
       const isPro =
         user?.subscriptionStatus === 'pro' || user?.subscriptionStatus === 'trial';
 
+      // PRD §8.1/§8.3: free users get 3 CUSTOM categories on top of the 11
+      // seeded defaults — counting all categories would block every free
+      // user forever, since each starts with 11.
       if (!isPro) {
-        const categoryCount = await prisma.category.count({ where: { userId } });
-        if (categoryCount >= 3) {
+        const customCategoryCount = await prisma.category.count({
+          where: { userId, isSystemDefault: false },
+        });
+        if (customCategoryCount >= FREE_CUSTOM_CATEGORY_LIMIT) {
           next(Errors.categoryLimitReached());
           return;
         }

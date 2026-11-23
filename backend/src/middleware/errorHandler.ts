@@ -76,7 +76,7 @@ export const Errors = {
   categoryLimitReached: () =>
     new AppError(
       'CATEGORY_LIMIT_REACHED',
-      'You have reached the maximum of 3 categories on the free plan. Upgrade to Oshi Pro for unlimited categories.',
+      'You have reached the maximum of 3 custom categories on the free plan. Upgrade to Oshi Pro for unlimited categories.',
       403,
     ),
 

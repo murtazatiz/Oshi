@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import {
-  createNavigationContainerRef,
   NavigationContainer,
   type LinkingOptions,
 } from '@react-navigation/native';
@@ -11,6 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { theme } from '../theme';
+import { navigationRef } from './navigationRef';
 import { useOnboardingStore } from '../store/onboardingStore';
 import { useAuthStore } from '../store/authStore';
 
@@ -63,7 +63,7 @@ const SettingsStack = createNativeStackNavigator<SettingsStackParamList>();
 // Navigation ref — exported so App.tsx can navigate outside React tree
 // and so deep links can be handled on cold start per PRD §4
 // ─────────────────────────────────────────────────────────────────────────────
-export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+export { navigationRef };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deep link configuration

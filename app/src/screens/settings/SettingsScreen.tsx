@@ -35,7 +35,8 @@ import * as Notifications from 'expo-notifications';
 
 import { useTheme, ThemeMode } from '../../theme/ThemeContext';
 import { useAuthStore } from '../../store/authStore';
-import { apiClient } from '../../services/apiClient';
+import { apiClient, getApiError, isLimitError } from '../../services/apiClient';
+import { openPaywall } from '../../services/paywall';
 import analytics, { optOutAnalytics, optInAnalytics, isOptedOut } from '../../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +48,12 @@ interface Category {
   name: string;
   emoji: string;
   save_count: number;
+  /** true for the 11 seeded defaults; only custom categories count toward the free limit */
+  is_system_default?: boolean;
 }
+
+/** PRD §8.1 — free users may create up to 3 custom categories on top of the 11 defaults */
+const FREE_CUSTOM_CATEGORY_LIMIT = 3;
 
 type ReminderDay = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0=Sun
 const DAY_LABELS: string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -307,6 +313,8 @@ export default function SettingsScreen(): React.JSX.Element {
 
   // ── Category state ────────────────────────────────────────────────────────
   const [categories, setCategories] = useState<Category[]>([]);
+  const customCategoryCount = categories.filter((c) => c.is_system_default !== true).length;
+  const isAtCategoryLimit = !isPro && customCategoryCount >= FREE_CUSTOM_CATEGORY_LIMIT;
   const [editingCat, setEditingCat] = useState<Category | null>(null);
   const [catEditVisible, setCatEditVisible] = useState(false);
   const [newCatVisible, setNewCatVisible] = useState(false);
@@ -505,17 +513,10 @@ export default function SettingsScreen(): React.JSX.Element {
   }
 
   async function handleAddCategory(): Promise<void> {
-    if (!isPro && categories.length >= 3) {
-      Alert.alert(
-        'Upgrade to Pro',
-        'Free users can have up to 3 categories. Upgrade to Pro for unlimited categories.',
-      );
+    if (isAtCategoryLimit) {
+      openPaywall('category_limit');
       return;
     }
-    console.log(
-      '[settings] handleAddCategory pressed — existing categories:',
-      categories.length,
-    );
     setNewCatName('');
     setNewCatVisible(true);
   }
@@ -763,19 +764,19 @@ export default function SettingsScreen(): React.JSX.Element {
               })}
             </View>
 
-            {isPro && (
-              <View style={[reminderStyles.digestRow, { borderTopColor: colors.border }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[reminderStyles.digestLabel, { color: colors.textPrimary }]}>Morning Digest</Text>
-                  <Text style={[reminderStyles.digestSub, { color: colors.textMuted }]}>8 AM summary of yesterday's saves · Pro</Text>
-                </View>
-                <Switch
-                  value={morningDigest}
-                  onValueChange={setMorningDigest}
-                  trackColor={{ true: colors.accent }}
-                />
+            {/* Shown to everyone: for free users the toggle is a paywall
+                trigger (PRD §8.3 — tapping a Pro-only toggle shows the paywall) */}
+            <View style={[reminderStyles.digestRow, { borderTopColor: colors.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[reminderStyles.digestLabel, { color: colors.textPrimary }]}>Morning Digest</Text>
+                <Text style={[reminderStyles.digestSub, { color: colors.textMuted }]}>8 AM summary of yesterday's saves · Pro</Text>
               </View>
-            )}
+              <Switch
+                value={isPro && morningDigest}
+                onValueChange={isPro ? setMorningDigest : () => openPaywall('settings')}
+                trackColor={{ true: colors.accent }}
+              />
+            </View>
 
             <TouchableOpacity
               onPress={() => void saveReminders()}
@@ -801,9 +802,9 @@ export default function SettingsScreen(): React.JSX.Element {
             onPress={() => void handleAddCategory()}
             style={[catStyles.addBtn, { borderTopColor: colors.border }]}
           >
-            <Text style={[catStyles.addBtnText, { color: !isPro && categories.length >= 3 ? colors.textMuted : colors.accent }]}>
+            <Text style={[catStyles.addBtnText, { color: isAtCategoryLimit ? colors.textMuted : colors.accent }]}>
               + Add Category
-              {!isPro && categories.length >= 3 ? '  (Pro)' : ''}
+              {isAtCategoryLimit ? '  (Pro)' : ''}
             </Text>
           </TouchableOpacity>
         </Section>
@@ -826,7 +827,7 @@ export default function SettingsScreen(): React.JSX.Element {
               label="Upgrade to Pro"
               sublabel="Unlimited saves, categories & more"
               right={<Text style={[styles.chevron, { color: colors.accent }]}>›</Text>}
-              onPress={() => {/* navigate to paywall */}}
+              onPress={() => openPaywall('settings')}
               isLast
             />
           )}
@@ -914,26 +915,24 @@ export default function SettingsScreen(): React.JSX.Element {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={async () => {
-                    console.log('[settings] Create category pressed');
-                    console.log('[settings] newCatName before trim:', newCatName);
                     const name = newCatName.trim();
-                    if (!name) {
-                      console.log('[settings] Create aborted — empty name');
-                      return;
-                    }
+                    if (!name) return;
                     try {
-                      console.log('[settings] POST /categories payload:', { name, emoji: '📌' });
                       const res = await apiClient.post<Category>('/categories', {
                         name,
                         emoji: '📌',
                       });
-                      console.log('[settings] POST /categories response:', res.data);
                       setCategories((prev) => [...prev, res.data]);
                       analytics.settingsCategoryCreated();
                       setNewCatVisible(false);
                     } catch (err) {
-                      console.log('[settings] POST /categories error:', err);
-                      Alert.alert('Error', 'Could not create category.');
+                      if (isLimitError(err)) {
+                        // The interceptor has opened the paywall; this RN Modal
+                        // renders above navigation and would hide it.
+                        setNewCatVisible(false);
+                        return;
+                      }
+                      Alert.alert('Error', getApiError(err)?.message ?? 'Could not create category.');
                     }
                   }}
                 >

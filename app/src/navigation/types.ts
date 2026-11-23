@@ -1,5 +1,7 @@
 import type { NavigatorScreenParams } from '@react-navigation/native';
 
+import type { PaywallTrigger } from '../services/paywall';
+
 // Param lists are `type` aliases, not `interface`s: React Navigation v7's
 // ParamListBase constraint requires an implicit index signature, which TS
 // grants to object type aliases but never to interfaces.
@@ -62,8 +64,8 @@ export type MainStackParamList = {
   MainTabs: NavigatorScreenParams<MainTabParamList>;
   /** Deep link: oshi://save/:saveId (PRD §4) */
   ContentDetail: { saveId: string };
-  /** PRD §8.3 — paywall shown on limit triggers */
-  Paywall: undefined;
+  /** PRD §8.3 — paywall; trigger drives the headline and analytics */
+  Paywall: { trigger?: PaywallTrigger } | undefined;
   /** Manual URL save modal — reliable fallback for sharing URLs */
   SaveUrl: { prefillUrl?: string } | undefined;
 }

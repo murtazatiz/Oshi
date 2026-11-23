@@ -28,7 +28,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { useShareIntentContext } from 'expo-share-intent';
 
 import { useTheme } from '../theme/ThemeContext';
-import { apiClient } from '../services/apiClient';
+import { apiClient, isLimitError } from '../services/apiClient';
 import { enqueue } from '../services/offlineQueue';
 import { useSavesStore } from '../store/savesStore';
 import type { SaveData } from '../components/OshiCard';
@@ -123,7 +123,7 @@ function CategoryPicker({ visible, categories, onSelect, onClose }: CategoryPick
 // ShareHandlerScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Status = 'loading' | 'saved' | 'queued' | 'error';
+type Status = 'loading' | 'saved' | 'queued' | 'limit' | 'error';
 
 export default function ShareHandlerScreen(): React.JSX.Element | null {
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
@@ -231,7 +231,16 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
         setStatus('saved');
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         scheduleAutoDismiss();
-      } catch {
+      } catch (err) {
+        if (isLimitError(err)) {
+          // Not a connectivity problem — queueing would retry a save the
+          // server will keep refusing. The apiClient interceptor has opened
+          // the paywall beneath this overlay; auto-dismiss reveals it.
+          setStatus('limit');
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          scheduleAutoDismiss();
+          return;
+        }
         await enqueue(resolvedUrl!, sourceApp);
         setStatus('queued');
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -326,7 +335,7 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
           )}
 
           {/* Category badge — tappable */}
-          {status !== 'loading' && (
+          {(status === 'saved' || status === 'queued') && (
             <TouchableOpacity
               onPress={() => {
                 if (categories.length > 0) setPickerVisible(true);
@@ -361,6 +370,11 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
             {status === 'queued' && (
               <Text style={[styles.statusText, { color: colors.textMuted }]}>
                 Queued — will save when back online
+              </Text>
+            )}
+            {status === 'limit' && (
+              <Text style={[styles.statusText, { color: colors.warning }]}>
+                Monthly save limit reached — upgrade to keep saving
               </Text>
             )}
             {status === 'error' && (

@@ -45,6 +45,7 @@ import {
   subscribeToSaveUpdates,
   unsubscribeFromSaveUpdates,
 } from '../services/realtime';
+import { openPaywall } from '../services/paywall';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuthStore } from '../store/authStore';
 import {
@@ -1013,7 +1014,7 @@ export default function HomeScreen(): React.JSX.Element {
           </Text>
           <View style={styles.trialBannerActions}>
             <TouchableOpacity
-              onPress={() => navigation.navigate('MainTabs', { screen: 'SettingsTab', params: { screen: 'Subscription' } })}
+              onPress={() => openPaywall('trial_expiry')}
               style={[styles.trialUpgradeBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}
               accessibilityLabel="Upgrade now"
             >

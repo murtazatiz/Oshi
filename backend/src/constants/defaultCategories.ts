@@ -5,7 +5,10 @@
 // classification fallback list (services/aiService.ts). These two consumers
 // previously kept separate hardcoded lists that had drifted from the PRD
 // (Finance/Technology/Culture/News/Personal are not PRD categories).
-// "Other" must always be last and is the system fallback (isSystemDefault).
+// "Other" must always be last (the AI fallback; cannot be deleted).
+// All 11 are isSystemDefault: true (PRD §5 schema: "for the 11 default
+// categories") — the free-tier limit counts only categories the user
+// created (isSystemDefault: false), so defaults never use up the 3 slots.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface DefaultCategory {
@@ -16,16 +19,16 @@ export interface DefaultCategory {
 }
 
 export const DEFAULT_CATEGORIES: DefaultCategory[] = [
-  { name: 'Learning',      emoji: '🎓', sortOrder: 0,  isSystemDefault: false },
-  { name: 'Business',      emoji: '💼', sortOrder: 1,  isSystemDefault: false },
-  { name: 'Travel',        emoji: '✈️', sortOrder: 2,  isSystemDefault: false },
-  { name: 'Food',          emoji: '🍔', sortOrder: 3,  isSystemDefault: false },
-  { name: 'Fitness',       emoji: '💪', sortOrder: 4,  isSystemDefault: false },
-  { name: 'Entertainment', emoji: '🎬', sortOrder: 5,  isSystemDefault: false },
-  { name: 'Shopping',      emoji: '🛍️', sortOrder: 6,  isSystemDefault: false },
-  { name: 'Inspiration',   emoji: '✨', sortOrder: 7,  isSystemDefault: false },
-  { name: 'Tech',          emoji: '💻', sortOrder: 8,  isSystemDefault: false },
-  { name: 'People',        emoji: '👥', sortOrder: 9,  isSystemDefault: false },
+  { name: 'Learning',      emoji: '🎓', sortOrder: 0,  isSystemDefault: true  },
+  { name: 'Business',      emoji: '💼', sortOrder: 1,  isSystemDefault: true  },
+  { name: 'Travel',        emoji: '✈️', sortOrder: 2,  isSystemDefault: true  },
+  { name: 'Food',          emoji: '🍔', sortOrder: 3,  isSystemDefault: true  },
+  { name: 'Fitness',       emoji: '💪', sortOrder: 4,  isSystemDefault: true  },
+  { name: 'Entertainment', emoji: '🎬', sortOrder: 5,  isSystemDefault: true  },
+  { name: 'Shopping',      emoji: '🛍️', sortOrder: 6,  isSystemDefault: true  },
+  { name: 'Inspiration',   emoji: '✨', sortOrder: 7,  isSystemDefault: true  },
+  { name: 'Tech',          emoji: '💻', sortOrder: 8,  isSystemDefault: true  },
+  { name: 'People',        emoji: '👥', sortOrder: 9,  isSystemDefault: true  },
   { name: 'Other',         emoji: '📌', sortOrder: 10, isSystemDefault: true  },
 ];
 

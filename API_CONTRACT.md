@@ -72,7 +72,7 @@ Response 200:
 { "categories": [     { "id": "uuid", "name": "Business", "emoji": "💼",       "sort_order": 1, "is_system_default": true,       "unread_count": 12, "total_count": 34,       "reminder_override_time": null }   ] }
 POST /categories
 Request: { name, emoji?, sort_order? }
-Free tier: returns 403 CATEGORY_LIMIT_REACHED if user already has 3 categories.
+Free tier: returns 403 CATEGORY_LIMIT_REACHED if user already has 3 custom categories (is_system_default=false). The 11 categories seeded at signup are is_system_default=true and never count toward the limit. (Clarified 2026-11-23: counting all categories would block every free user, since each starts with 11.)
 Response 201: new category object.
 DELETE /categories/:id
 Backend: finds the user's 'Other' category. Moves all saves from deleted category to Other. Then deletes the category. Response 204.

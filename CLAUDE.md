@@ -146,6 +146,8 @@ Cron (`cron/scheduler.ts`, all UTC):
 - Monthly reset: `0 0 1 * *` resets `items_saved_this_month` to 0.
 - Morning Digest: every minute, Pro/trial users with `morning_digest` on whose
   local time (`users.timezone`) is 08:00 get a summary of yesterday's saves.
+- Nightly purge: `0 3 * * *` permanently removes soft-deleted saves (>7 days)
+  and users (>30 days).
 
 ### Data model (`prisma/schema.prisma`)
 Tables: `users`, `categories`, `saves`, `user_engagement_signals`,
@@ -154,7 +156,9 @@ Tables: `users`, `categories`, `saves`, `user_engagement_signals`,
 - Enum-like fields are plain strings documented at the top of the schema;
   valid values are enforced by **Supabase CHECK constraints**, not by Prisma.
 - Soft deletes: `saves.deleted_at` (purged after 7 days), `users.deleted_at`
-  (30 days). Always filter `deletedAt: null` in queries.
+  (30 days; the purge also deletes the avatar and the Supabase Auth account).
+  The nightly purge is `services/purgeService.ts` (ADR-0021). Always filter
+  `deletedAt: null` in queries.
 - `DATABASE_URL` must include `?pgbouncer=true` (pooled, runtime). Migrations
   use `DIRECT_URL` (non-pooled) because PgBouncer blocks advisory locks.
 
@@ -173,7 +177,8 @@ src/
   navigation/   AppNavigator.tsx (stacks/tabs + deep-link config), types.ts (param lists)
   screens/      auth/, onboarding/, library/, search/, settings/ + top-level screens
   components/   OshiCard, CategoryTabs, StreakDisplay, UndoToast, *SkeletonCard,
-                ReminderSettings (shared by Settings + RemindersScreen), etc.
+                ReminderSettings (shared by Settings + RemindersScreen),
+                CategoryPickerSheet (the only category picker), etc.
   store/        Zustand: authStore, savesStore, onboardingStore, subscriptionStore
   services/     apiClient (axios), supabase, analytics, errorMonitoring, purchases,
                 offlineQueue, shareExtension, realtime, paywall

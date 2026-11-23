@@ -107,6 +107,10 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | TC-CAT-02 | P1 | e2e | Rename feeds the AI | Rename "Tech" → "Gadgets", save a tech article | AI prompt uses live names: the save lands in "Gadgets" (dynamic prompt, ADR-0003) |
 | TC-CAT-03 | P0 | api | Delete moves saves to Other | Delete a category holding saves | `DELETE /categories/:id` succeeds; its saves now carry the "Other" category; nothing deleted |
 | TC-CAT-04 | P2 | api | Counts | `GET /categories` after mixed statuses | Each category's `unread_count`/`total_count` match reality; deleted saves excluded |
+| TC-CAT-06 | P1 | app | One category picker everywhere | Open the picker from: a card's kebab → Edit Category; multi-select → Move; Content Detail → Change Category; the share sheet's category badge. With 11 defaults + 3 custom categories | The same sheet each time (titled Change Category / Move to Category), with an emoji on every row. The list **scrolls** and every category is reachable. Follows dark mode. Picking one moves the save and closes the sheet |
+| TC-CAT-07 | P1 | app | Settings changes reach the Library immediately | In Settings rename a category, then delete another (with saves); switch to the Library without pulling to refresh | The renamed tab and every card's category chip show the new name. The deleted tab is gone and its saves now show "Other". If the deleted category was the active tab, the Library falls back to All |
+| TC-CAT-08 | P1 | e2e | Reorder persists | In Settings move a category up twice and another down once; force-quit and reopen; check `GET /categories` | The order matches what you set, and no two categories share a `sort_order`. **Regression guard for FIX-20261123-09** (only the moved row used to be saved) |
+| TC-CAT-09 | P2 | app | Settings shows real counts | Look at Settings → Categories; tap delete on a category with saves | Each row shows "N saves" (not "undefined saves"). The confirmation reads "All N saves in this category will move to Other." |
 | TC-CAT-05 | P1 | api | Formatter contract | `PATCH /categories/:id` (rename) on a populated category; inspect any category payload | PATCH response carries **real** unread/total counts (was hardcoded 0/0 — FIX-20260918-19); every category payload includes `slug` (lowercase-hyphenated name); `reminder_override_time` is **omitted** when null, never `null` |
 
 ## 8 · Import
@@ -174,6 +178,20 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |----|---|------|------|-------|----------|
 | TC-DEEP-01 | P1 | app | Full matrix | Open each: `oshi://library`, `oshi://library/food`, `oshi://save/<id>`, `oshi://settings/reminders`, `oshi://settings/subscription`, `oshi://notifications/enable` | Library home · Food tab · ContentDetail modal · Reminders · Subscription · OS notification settings (intercepted). Unauthenticated → Auth stack first, no crash |
 
+## 15 · Appearance
+
+| ID | P | Type | Case | Steps | Expected |
+|----|---|------|------|-------|----------|
+| TC-UI-01 | P1 | app | Theme fonts load | Cold-start the app (also once in airplane mode); look at onboarding headlines, screen titles and body text on iOS **and Android** | The splash stays up until fonts are ready. Headlines render in Sora Bold and titles/body in Inter (not the system font). Offline works because the fonts are bundled. On Android, check SemiBold text isn't double-bolded |
+| TC-UI-02 | P1 | app | Navigation follows dark mode | Switch Settings → dark mode (and system dark); move between tabs and push/pop screens | The tab bar, stack backgrounds, loading screen and the backdrop during transitions are dark, with no light flashes. Toggling updates them live |
+
+## 16 · Data retention
+
+| ID | P | Type | Case | Steps | Expected |
+|----|---|------|------|-------|----------|
+| TC-PURGE-01 | P1 | e2e | Save purge | On a staging DB: set one save's `deleted_at` to 8 days ago and another's to 6 days ago (SQL); run the purge (wait for 03:00 UTC or run `purgeDeletedSaves()` via `tsx`) | The 8-day save and its `user_engagement_signals` rows are gone; the 6-day save remains. `POST /saves/:id/restore` on the purged id → 404 |
+| TC-PURGE-02 | P0 | e2e | Account purge | On staging: a user with saves, categories, signals, notification logs and an avatar has `deleted_at` 31 days ago; another has 29 days ago; run `purgeDeletedUsers()` | First user: every row is gone, `avatars/<id>/profile.jpg` is removed, and the Supabase Auth user is deleted (sign-in fails). Second user is untouched. A failure for one user is reported to Sentry and doesn't stop the others |
+
 ---
 
 ## Coverage map
@@ -187,7 +205,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | Library 4 | 9 | J5 |
 | Smart sort 5 | 5 | J5 |
 | Actions 6 | 7 | J5, J6 |
-| Categories 7 | 5 | J8 |
+| Categories 7 | 9 | J8 |
 | Import 8 | 3 | J7 |
 | Offline 9 | 4 | J3 |
 | Notifications 10 | 7 | J4 |
@@ -195,8 +213,10 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | Engagement 12 | 2 | J11 |
 | Security 13 | 5 | — |
 | Deep links 14 | 1 | J4, J12 |
+| Appearance 15 | 2 | all |
+| Data retention 16 | 2 | J12 |
 
-**Total: 75 cases (P0: 25 · P1: 40 · P2: 10 — plus the gate).**
+**Total: 83 cases (P0: 26 · P1: 46 · P2: 11 — plus the gate).**
 
 > Paywall wiring landed 2026-11-23 (FIX-20261123-01); TC-SUB-01 is no longer known-blocked.
 >
@@ -208,5 +228,6 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial catalogue: 64 cases across 15 areas. |
 | 1.1 | 2026-09-18 18:30 | +4 regression cases for the wave-2 fixes (AUTH-07, LIB-09, SORT-05, CAT-05); AUTH-01/03, ACT-03, NOTIF-03 sharpened; paywall known-blocked note. |
+| 1.4 | 2026-11-23 07:05 | +CAT-06…09 (shared picker, Settings↔Library sync, reorder persistence, counts), new §15 Appearance (UI-01/02) and §16 Data retention (PURGE-01/02). |
 | 1.3 | 2026-11-23 04:23 | +NOTIF-05/06/07 (Morning Digest delivery & persistence, Reminders screen), +SUB-08 (day-5 upsell banner). |
 | 1.2 | 2026-11-23 04:11 | Paywall wiring: SUB-01 rewritten per trigger; +SUB-05/06/07; CAT-01 and IMP-03 (now P1) rewritten for the custom-category rule and stop-at-limit import; known-blocked note replaced by a dev-data prerequisite. |

@@ -75,6 +75,50 @@ Entry template:
 
 ---
 
+## 2026-11-23, backlog wave (06:10–07:05 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
+
+The remaining items from the 2026-09-18 architecture review's backlog that didn't need a product decision.
+
+### FIX-20261123-06 — The theme's fonts were never loaded
+- **Area:** app · **Severity:** bug (design system)
+- **Symptom:** Every screen rendered in the system font. `theme/index.ts` named `Sora-Bold`, `Inter-SemiBold` and `Inter-Regular` (PRD §7), but no font files were bundled and nothing loaded them.
+- **Fix:** `@expo-google-fonts/sora` + `@expo-google-fonts/inter` + `expo-font` (installed with `expo install` for SDK 54). `App.tsx` registers the three faces under exactly the theme's family names and keeps the native splash up until they load. If loading fails, it renders with system fonts rather than hanging.
+- **Verified by:** app tsc · TC-UI-01 (needs a device: check Android, where a custom family plus a `fontWeight` can trigger synthetic bolding).
+- **Commit:** `9621800`.
+
+### FIX-20261123-07 — Navigation chrome ignored dark mode
+- **Area:** app · **Severity:** bug
+- **Symptom:** In dark mode the tab bar, stack backgrounds, loading spinner backdrop and transition backdrop stayed light, because `AppNavigator` styled them from the static light theme object.
+- **Fix:** Each navigator reads live tokens from `useTheme`, and `NavigationContainer` gets a matching React Navigation theme built from the app's tokens.
+- **Verified by:** app tsc · TC-UI-02.
+- **Commit:** `9621800`.
+
+### FIX-20261123-08 — Four copy-pasted category pickers (one of them dead)
+- **Area:** app · **Severity:** bug + hygiene
+- **Symptom:** The Library and Content Detail pickers listed every category in a column that couldn't scroll, which ran off-screen with the 11 defaults plus custom ones. Each picker looked slightly different. Content Detail and the share handler each fetched `/categories` into their own local copy. The fourth copy, in `share-extension/ShareExtension.tsx`, could never open (its visibility flag was never set true, and the save id it would update was never assigned), yet it fetched `/categories` on every app launch.
+- **Fix:** `components/CategoryPickerSheet.tsx`: one scrollable, themed sheet, used by the Library (titled "Change Category" or "Move to Category"), Content Detail and the share handler. Those screens read `savesStore` categories and fetch into the store only when it's empty. The dead picker was removed along with its state, fetch, handler and styles.
+- **Verified by:** app tsc · TC-CAT-06.
+- **Commit:** `ab4c9d8`.
+
+### FIX-20261123-09 — Settings kept its own category list; reorder and counts were wrong
+- **Area:** app · **Severity:** bug
+- **Symptom:** (1) A rename, delete or reorder in Settings didn't reach the Library tabs or the category names on cards until the next Library fetch. (2) Reordering patched only the moved row, writing its list index as `sort_order`, and never updated the neighbour it swapped with. Two categories could then share a `sort_order`, and the order didn't reliably survive a reload. (3) Every row said "undefined saves", and the delete confirmation said "All undefined saves … will move to Other", because Settings read `save_count`, which the API never returns (it sends `total_count`).
+- **Fix:** `savesStore` now owns category management: `createCategory`, `updateCategory` (also renames the category on loaded saves), `deleteCategory` (reloads saves and categories because the server moves the saves to "Other"), and `moveCategory` (swaps both rows' existing `sort_order` values, patches both, and rolls back on failure). Settings reads the store's list and uses `total_count`.
+- **Verified by:** app tsc · TC-CAT-07, TC-CAT-08, TC-CAT-09.
+- **Commit:** `11f4164`.
+
+### FIX-20261123-10 — No soft-delete purge existed
+- **Area:** backend · **Severity:** bug (data retention / privacy)
+- **Symptom:** Deleted saves and deleted accounts were kept forever. Route comments, `CLAUDE.md` and PRD §3.7.5 all described a nightly purge that didn't exist.
+- **Fix:** `services/purgeService.ts`, scheduled at 03:00 UTC. Saves deleted more than 7 days ago are removed in batches with their engagement signals. Users deleted more than 30 days ago lose all their rows (in one transaction), their avatar and their Supabase Auth account. Dependent rows are deleted explicitly instead of relying on database cascades (ADR-0021).
+- **Verified by:** backend tsc. **Not exercised against a database**; run TC-PURGE-01/02 on a staging copy before relying on it.
+- **Commit:** `217e842`.
+
+### Open item found during this wave (not fixed)
+- `app/package.json` pins `expo-share-intent` at `^6.0.0`, which requires Expo SDK 55; the app is on SDK 54. This was already on `main` before this branch. `expo install` warns about it, and it can break the Android share-intent build. Fix: install the SDK 54-compatible major (see expo-share-intent's compatibility table) or upgrade the SDK. That's a dependency decision, so it's left for you.
+
+---
+
 ## 2026-09-18 (session 17:15–17:35 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
 
 ### FIX-20260918-01 — DELETE /saves/:id left deleted saves in the smart-sort cache
@@ -258,3 +302,4 @@ Entry template:
 | 1.1 | 2026-09-18 18:20 | Second wave (FIX-11…20) from the deep exploration pass. |
 | 1.2 | 2026-11-23 04:11 | Paywall wiring (FIX-20261123-01) and custom-category limit (FIX-20261123-02). |
 | 1.3 | 2026-11-23 04:23 | Reminders screen, Morning Digest persistence + sender, day-5 upsell banner (FIX-20261123-03…05). |
+| 1.4 | 2026-11-23 07:05 | Backlog wave: fonts, dark-mode navigation, category pickers, Settings categories, purge (FIX-20261123-06…10); expo-share-intent open item. |

@@ -31,7 +31,7 @@ Two orthogonal state machines on every save, plus a link-health flag:
 
 **`link_status`**: `active | unavailable | private`, maintained by the nightly dead-link checker (02:00 UTC).
 
-**Soft deletes:** `DELETE /saves/:id` sets `deleted_at` (purge after 7 days is promised but the purge cron does not exist yet — see the architecture review backlog). Users: `deleted_at` with a 30-day window. Every query filters `deleted_at IS NULL`; the one exception is `POST /saves/:id/restore` (added 2026-09-18), which clears `deleted_at` for the undo path — status and timestamps are untouched by delete, so the save returns exactly as it was.
+**Soft deletes:** `DELETE /saves/:id` sets `deleted_at`; the nightly purge (03:00 UTC) removes saves deleted more than 7 days ago. Users: `deleted_at`, and after 30 days the purge removes all their rows, their avatar and their Supabase Auth account (ADR-0021). Every query filters `deleted_at IS NULL`; the one exception is `POST /saves/:id/restore` (added 2026-09-18), which clears `deleted_at` for the undo path — status and timestamps are untouched by delete, so the save returns exactly as it was.
 
 ### 2.1 Creating a save (critical path)
 
@@ -82,6 +82,8 @@ YouTube via Data API v3 (full); Instagram/TikTok/Twitter via Open Graph **only**
 **Search** matches title, creator, summary, tags, and URL (client-side, case-insensitive, 300ms debounce). **Platform and status chip filters are independent** — each applies only when its selection is non-empty.
 
 **Sorts**: `ai_recommended` (default) | `recent` | `oldest` | `shortest` (nulls last) | `manual` (nulls fall back to recency). Sort preference persists in AsyncStorage (`oshi_sort_global`).
+
+**Categories** live in `savesStore` for every screen. Settings creates, renames, deletes and reorders through it (a reorder swaps the two rows' `sort_order`), so the Library tabs and card chips update immediately. Every category picker is `components/CategoryPickerSheet`.
 
 **Category counts** shown on tabs are computed from `allSaves` in memory; `fetchCategories` refreshes server counts after mutations.
 
@@ -159,3 +161,4 @@ Root gate: `Main` renders only when `session !== null` **AND** `onboardingStore.
 | 1.1 | 2026-09-18 18:35 | Restore endpoint, uniform invalidation contract, purge-job caveat. |
 | 1.2 | 2026-11-23 04:11 | Paywall wiring and the custom-category limit. |
 | 1.3 | 2026-11-23 04:23 | Morning Digest, shared reminder editor, day-5 upsell banner. |
+| 1.4 | 2026-11-23 07:05 | Nightly purge; category management through savesStore. |

@@ -103,7 +103,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 
 | ID | P | Type | Case | Steps | Expected |
 |----|---|------|------|-------|----------|
-| TC-CAT-01 | P0 | e2e | Free custom-category limit | As free, create 3 custom categories, then a 4th | First three succeed; 4th → typed limit error → paywall. Trial/pro unlimited |
+| TC-CAT-01 | P0 | e2e | Free custom-category limit | As a fresh free user (11 seeded defaults), create 3 custom categories in Settings, then a 4th | First three succeed — the 11 defaults don't count. The 4th: Settings' **+ Add Category** reads "(Pro)" and tapping it opens the paywall with the *"You've reached 3 custom categories"* headline (server-side, `POST /categories` → 403 `CATEGORY_LIMIT_REACHED`). Trial/pro unlimited. **Regression guard for FIX-20261123-02** (the old rule counted all categories, so free users could never create one) |
 | TC-CAT-02 | P1 | e2e | Rename feeds the AI | Rename "Tech" → "Gadgets", save a tech article | AI prompt uses live names: the save lands in "Gadgets" (dynamic prompt, ADR-0003) |
 | TC-CAT-03 | P0 | api | Delete moves saves to Other | Delete a category holding saves | `DELETE /categories/:id` succeeds; its saves now carry the "Other" category; nothing deleted |
 | TC-CAT-04 | P2 | api | Counts | `GET /categories` after mixed statuses | Each category's `unread_count`/`total_count` match reality; deleted saves excluded |
@@ -115,7 +115,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |----|---|------|------|-------|----------|
 | TC-IMP-01 | P1 | app | Paste URLs | Paste 5 URLs (1 duplicate, 1 junk line) into Import → Paste | Live detection shows 4 valid; sequential POSTs with progress; result = 3 imported, 1 skipped-duplicate; junk ignored |
 | TC-IMP-02 | P1 | app | Bookmarks HTML | Pick an exported bookmarks `.html` | File is readable (needs `copyToCacheDirectory` — FIX-20260918-03 №3); links parsed with checkboxes; batch import respects selection |
-| TC-IMP-03 | P2 | e2e | Import hits the limit | Free user at 18/20 imports 5 URLs | 2 succeed, then limit error surfaces mid-batch with a clear count + paywall path; no partial-row corruption |
+| TC-IMP-03 | P1 | e2e | Import hits the limit | Free user at 18/20 saves imports 5 URLs | 2 succeed; the 3rd hits 403 → import **stops** (no further POSTs), the paywall opens once (not once per URL), and the result reads "2 saves added, 3 not imported — monthly save limit reached" |
 
 ## 9 · Offline queue
 
@@ -139,7 +139,10 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 
 | ID | P | Type | Case | Steps | Expected |
 |----|---|------|------|-------|----------|
-| TC-SUB-01 | P0 | app | Paywall triggers | Hit save limit; hit category limit; touch a Pro feature | Paywall modal each time, with the correct trigger copy |
+| TC-SUB-01 | P0 | app | Paywall triggers | As a free user: (a) 21st save via the Save URL modal; (b) 4th custom category in Settings; (c) Settings → Upgrade to Pro; (d) toggle Morning Digest; (e) trial banner → Upgrade Now (as a trial user on expiry day) | Paywall opens every time with the matching headline: (a) "You've used all 20 saves this month" — the Save URL modal also shows the backend's limit message underneath; (b) "You've reached 3 custom categories" — the new-category sheet closes so it can't hide the paywall; (c, d) "Upgrade to Oshi Pro"; (e) "Your Pro trial is ending". PostHog `paywall_viewed` carries the matching `trigger`. **Regression guard for FIX-20261123-01** |
+| TC-SUB-05 | P0 | app | Share-sheet limit | As a free user at 20/20, share a link into Oshi from another app | Share card shows *"Monthly save limit reached — upgrade to keep saving"* (not "Queued — will save when back online"); the URL is **not** put in the offline queue; when the card auto-dismisses, the paywall is open beneath it |
+| TC-SUB-06 | P1 | app | Background flush never pops the paywall | Free user at 20/20 with saves already in the offline queue → background and foreground the app twice | The queue flush hits 403 silently (`skipPaywall`): **no** paywall appears, the items stay queued, and they go through after an upgrade or the 1st-of-month reset |
+| TC-SUB-07 | P1 | app | Subscription settings screen | Open `oshi://settings/subscription` (or tap a trial-expiry push) as free, trial, pro, and cancelled users | Real screen (no placeholder): shows the current plan; free/trial/cancelled get an upgrade button → paywall; pro/cancelled get **Manage subscription** → the App Store / Play Store subscriptions page; Restore purchases works for all |
 | TC-SUB-02 | P0 | api | Webhook auth | POST `/subscriptions/webhook` without / with wrong / with correct `REVENUECAT_WEBHOOK_AUTH_HEADER` | Unauthorized rejected; correct secret updates `subscription_status` per event |
 | TC-SUB-03 | P1 | e2e | Upgrade unlocks | Complete a (sandbox) purchase | Status → pro; saves beyond 20 succeed; new AI jobs route to the priority queue (observe faster completion) |
 | TC-SUB-04 | P1 | e2e | Downgrade preserves | Expire/cancel to free with >20 saves and >3 categories | Everything remains visible/usable; only **new** saves/categories beyond limits are blocked |
@@ -184,14 +187,16 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | Import 8 | 3 | J7 |
 | Offline 9 | 4 | J3 |
 | Notifications 10 | 4 | J4 |
-| Subscription 11 | 4 | J9 |
+| Subscription 11 | 7 | J9 |
 | Engagement 12 | 2 | J11 |
 | Security 13 | 5 | — |
 | Deep links 14 | 1 | J4, J12 |
 
-**Total: 68 cases (P0: 24 · P1: 33 · P2: 11 — plus the gate).**
+**Total: 71 cases (P0: 25 · P1: 36 · P2: 10 — plus the gate).**
 
-> ⚠ Known-blocked areas (see the architecture review's backlog): TC-SUB-01's paywall triggers are currently **unwired** in the app (PaywallScreen unreachable) — expect this case to fail until the paywall wiring lands; run it to confirm the gap, not to pass it.
+> Paywall wiring landed 2026-11-23 (FIX-20261123-01); TC-SUB-01 is no longer known-blocked.
+>
+> ⚠ **Dev-data prerequisite for TC-CAT-01:** accounts created before 2026-11-23 had 10 of their 11 defaults stored as `is_system_default = false`, so they still count as custom and stay blocked. Test with a fresh signup, or run the backfill in FIXES_LOG FIX-20261123-02 first.
 
 ---
 
@@ -199,3 +204,4 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial catalogue: 64 cases across 15 areas. |
 | 1.1 | 2026-09-18 18:30 | +4 regression cases for the wave-2 fixes (AUTH-07, LIB-09, SORT-05, CAT-05); AUTH-01/03, ACT-03, NOTIF-03 sharpened; paywall known-blocked note. |
+| 1.2 | 2026-11-23 04:11 | Paywall wiring: SUB-01 rewritten per trigger; +SUB-05/06/07; CAT-01 and IMP-03 (now P1) rewritten for the custom-category rule and stop-at-limit import; known-blocked note replaced by a dev-data prerequisite. |

@@ -20,6 +20,40 @@ Entry template:
 
 ---
 
+## 2026-11-23 (session 03:55–04:15 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
+
+### FIX-20261123-01 — The paywall was unreachable (PRD §8.3 triggers unwired)
+- **Area:** app · **Severity:** bug (monetization)
+- **Symptom:** No path in the app opened `PaywallScreen`. Hitting the 20-save limit showed a raw "Request failed with status code 403" (Save URL), was miscounted as "duplicate skipped" (Import), or was silently queued as if offline (share sheet). The Settings "Upgrade to Pro" row did nothing, the trial-banner CTA led to a placeholder screen, and the Morning Digest toggle was hidden from free users.
+- **Root cause:** `PaywallScreen` was registered in the navigator with zero `navigate` call sites, and no code read the backend's `SAVE_LIMIT_REACHED` / `CATEGORY_LIMIT_REACHED` codes.
+- **Fix:**
+  1. `app/src/services/paywall.ts` — `openPaywall(trigger)` is the single entry point (no-op before navigation mounts or when the paywall is already open, so a batch import can't stack paywalls). `navigationRef` moved to `navigation/navigationRef.ts` so services can navigate without importing the screen tree.
+  2. `apiClient`'s response interceptor opens the paywall on either limit code, so no call site can forget to. Requests can opt out with `{ skipPaywall: true }`; the offline-queue flush does, so a queued over-limit save stays queued and syncs after an upgrade or the monthly reset without popping the paywall on every foreground. New `getApiError()` / `isLimitError()` read the API contract's error envelope.
+  3. Call sites: Import **stops** at the first limit error and reports "N not imported — monthly save limit reached" (it previously labelled every failure a "duplicate"); the share sheet shows a limit message instead of queueing; Save URL shows the backend's message; Settings' new-category sheet closes on the limit error (an RN `Modal` renders above navigation and would hide the paywall).
+  4. Triggers: Settings → Upgrade to Pro, the Morning Digest toggle for free users, the trial-banner CTA, and the new Subscription screen all call `openPaywall`.
+  5. `PaywallScreen` reads its `trigger` param, shows the matching headline ("You've used all 20 saves this month", …), and sends the real trigger to PostHog `paywall_viewed` (was hardcoded `'direct'`).
+  6. `SubscriptionScreen` (deep-link target of `oshi://settings/subscription` and trial-expiry pushes) replaced its placeholder with current plan, upgrade, Manage subscription (store page), and restore.
+- **Verified by:** `cd app && npx tsc --noEmit` → 0 errors · TC-SUB-01, TC-SUB-05, TC-SUB-06, TC-SUB-07, TC-IMP-03.
+- **Commit:** see `git log` for 2026-11-23 · **Related:** ADR-0018.
+
+### FIX-20261123-02 — Free users could never create a category
+- **Area:** backend + app · **Severity:** bug (business rule)
+- **Symptom:** On the free plan, "+ Add Category" always showed the upgrade alert and `POST /categories` always returned 403, even for a brand-new user who had created nothing.
+- **Root cause:** Both the backend (`prisma.category.count({ where: { userId } }) >= 3`) and the Settings screen (`categories.length >= 3`) counted **all** categories, and every user is seeded 11 at signup. The PRD is internally inconsistent here: §8.1 says "3 active categories maximum", but §3.2.1 seeds 11 defaults and §8.2 says Pro gets "unlimited **custom** categories". `CLAUDE.md` and `context.md` already stated the rule as "3 custom categories", which is the only reading that can be satisfied.
+- **Fix:** All 11 seeded categories now carry `is_system_default = true`, which is the PRD §5 schema's stated purpose for that column (seeding previously set it only on "Other"). The limit counts `is_system_default = false` rows in both the backend route and the Settings gate. The error message and API contract §4 now say "custom categories". The flag has no other behaviour anywhere in the code, so this changes nothing else.
+- **Existing data:** accounts seeded before this fix still have 10 defaults flagged `false`, so they stay blocked until backfilled. Production isn't deployed, so this only affects dev/test data. Backfill (run in the Supabase SQL editor):
+  ```sql
+  UPDATE categories SET is_system_default = true
+  WHERE name IN ('Learning','Business','Travel','Food','Fitness','Entertainment','Shopping',
+                 'Inspiration','Tech','People','Other',
+                 'Finance','Technology','Culture','News','Personal');  -- pre-2026-09-18 seed names
+  ```
+  Caveat: this also flags any *custom* category a dev user happened to create with one of those names.
+- **Verified by:** `cd backend && npm run lint` → 0 errors · TC-CAT-01.
+- **Commit:** see `git log` for 2026-11-23 · **Related:** ADR-0019. **Flag for product:** confirm "3 custom categories" is the intended rule and correct PRD §8.1's wording.
+
+---
+
 ## 2026-09-18 (session 17:15–17:35 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
 
 ### FIX-20260918-01 — DELETE /saves/:id left deleted saves in the smart-sort cache
@@ -201,3 +235,4 @@ Entry template:
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:32 | Initial log: 2026-09-18 session fixes + retroactive PR #2 entry. |
 | 1.1 | 2026-09-18 18:20 | Second wave (FIX-11…20) from the deep exploration pass. |
+| 1.2 | 2026-11-23 04:11 | Paywall wiring (FIX-20261123-01) and custom-category limit (FIX-20261123-02). |

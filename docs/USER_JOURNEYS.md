@@ -85,10 +85,13 @@ Create (free tier: max 3 custom → paywall), rename, re-emoji, delete (**saves 
 
 ## J9 — Hitting a limit → upgrading
 
-**Trigger:** 21st save in a month, 4th custom category, or a Pro-feature touch. **Covers:** TC-SUB-01…04.
+**Trigger:** 21st save in a month, 4th custom category (the 11 defaults don't count), the Settings upgrade row, a Pro-only toggle, or the trial-expiry banner. **Covers:** TC-SUB-01…07, TC-CAT-01, TC-IMP-03.
 
-1. Backend rejects with the typed error → app opens Paywall (RevenueCat purchase sheet).
-2. Purchase → RevenueCat webhook flips `subscription_status` → limits vanish, AI jobs route to the priority queue.
+1. Backend rejects with a typed 403 → `apiClient` opens the Paywall with a trigger-specific headline ("You've used all 20 saves this month"). The surface the user was on reacts too: Save URL shows the limit message, Import stops and reports how many weren't imported, the share sheet says the limit was reached (and doesn't queue).
+2. User picks monthly/annual → RevenueCat purchase sheet → on success the paywall closes itself.
+3. RevenueCat webhook flips `subscription_status` → limits vanish, AI jobs route to the priority queue, and any over-limit saves waiting in the offline queue sync on the next flush.
+
+Alternative entry: Settings → Subscription (also the target of trial-expiry pushes) shows the current plan, upgrade, Manage subscription, and restore.
 
 **Outcome:** friction exactly at the value moment; content never held hostage — **downgrade preserves everything**, only blocks new saves/categories beyond free limits.
 
@@ -144,3 +147,4 @@ Session restored from SecureStore → JWT synced to App Group → RevenueCat/Pos
 | Doc version | Date (UTC) | Change |
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial journey catalogue (J1–J13). |
+| 1.1 | 2026-11-23 04:11 | J9 rewritten for the wired paywall. |

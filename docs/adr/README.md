@@ -25,5 +25,7 @@
 | [0015](0015-manual-test-catalogue-for-now.md) | Manual test catalogue instead of a test framework, for now | Accepted | 2026-09-18 |
 | [0016](0016-app-platform-constants-module.md) | App renders platform metadata through constants/platforms | Accepted | 2026-09-18 |
 | [0017](0017-authstore-single-session-source.md) | authStore is the single source of session truth | Accepted | 2026-09-18 |
+| [0018](0018-paywall-opens-from-api-interceptor.md) | Limit errors open the paywall from the apiClient interceptor | Accepted | 2026-11-23 |
+| [0019](0019-free-category-limit-counts-custom-only.md) | The free-tier category limit counts custom categories only | Accepted | 2026-11-23 |
 
-**Doc version:** 1.0 · **Created:** 2026-09-18 17:34 UTC
+**Doc version:** 1.1 · **Created:** 2026-09-18 17:34 UTC · **Last updated:** 2026-11-23 04:11 UTC (ADR-0018, 0019)

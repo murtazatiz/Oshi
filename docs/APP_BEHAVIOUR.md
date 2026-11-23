@@ -131,7 +131,9 @@ Root gate: `Main` renders only when `session !== null` **AND** `onboardingStore.
 
 *digest & per-category reminders are partially implemented — see context.md §9.
 
-Paywall triggers: save limit, category limit, Pro-feature touch. Payments entirely via RevenueCat (webhook updates `subscription_status`); downgrade **preserves all content**, only blocks new saves/categories beyond free limits. Signup seeds **11 default categories** and starts the trial. Streaks are Duolingo-style hard reset.
+**Custom categories:** the free limit is 3 categories the user *creates*; the 11 seeded defaults are `is_system_default = true` and never count (ADR-0019).
+
+**Paywall** (ADR-0018): every trigger goes through `services/paywall.ts openPaywall(trigger)`. The two limit codes (`SAVE_LIMIT_REACHED`, `CATEGORY_LIMIT_REACHED`, both 403) open it automatically from `apiClient`'s response interceptor, and the request still rejects so the caller can react: Import stops the batch, the share sheet shows a limit message instead of queueing, and Settings closes its new-category sheet. Other triggers are Settings → Upgrade to Pro, the Morning Digest toggle for free users, the trial-banner CTA, and the Subscription screen. It never opens twice, never before navigation mounts, and never for background requests marked `skipPaywall` (offline-queue flushes, whose over-limit items stay queued until an upgrade or the monthly reset). The headline matches the trigger, and PostHog `paywall_viewed` records it. Not yet built: the PRD's day-5 soft-upsell banner. Payments entirely via RevenueCat (webhook updates `subscription_status`); downgrade **preserves all content**, only blocks new saves/categories beyond free limits. Signup seeds **11 default categories** and starts the trial. Streaks are Duolingo-style hard reset.
 
 ## 10. Performance targets (PRD §10)
 
@@ -153,3 +155,4 @@ Paywall triggers: save limit, category limit, Pro-feature touch. Payments entire
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:32 | Initial behaviour reference. |
 | 1.1 | 2026-09-18 18:35 | Restore endpoint, uniform invalidation contract, purge-job caveat. |
+| 1.2 | 2026-11-23 04:11 | Paywall wiring and the custom-category limit. |

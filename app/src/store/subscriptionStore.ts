@@ -10,6 +10,7 @@
  *   • Trial expiry banner flag (§3.4.3)
  */
 import { create } from 'zustand';
+import analytics from '../services/analytics';
 import type { PurchasesPackage } from 'react-native-purchases';
 import * as Haptics from 'expo-haptics';
 import {
@@ -122,7 +123,12 @@ export const useSubscriptionStore = create<SubscriptionState & SubscriptionActio
       }
     },
 
-    setStreak: (count) => set({ streakCount: count }),
+    setStreak: (count) => {
+      const previous = get().streakCount;
+      set({ streakCount: count });
+      // Hard reset (Duolingo-style): the server's count fell below what we had
+      if (previous > 1 && count < previous) analytics.streakReset(previous);
+    },
 
     checkMilestone: (count) => {
       if ((STREAK_MILESTONES as readonly number[]).includes(count)) {

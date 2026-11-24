@@ -34,6 +34,8 @@ import { apiClient, getApiError } from '../services/apiClient';
 import type { MainStackParamList } from '../navigation/types';
 import { useSavesStore } from '../store/savesStore';
 import { isValidHttpUrl } from '../utils/url';
+import analytics from '../services/analytics';
+import type { SaveData } from '../components/OshiCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -123,12 +125,13 @@ export default function SaveUrlScreen(): React.JSX.Element {
     setSaveState('saving');
 
     try {
-      const res = await apiClient.post('/saves', { url: trimmed });
+      const res = await apiClient.post<SaveData & { duplicate?: boolean }>('/saves', { url: trimmed });
       // Optimistically insert the new pending save so the user immediately
       // sees a processing card at the top of the Library.
       // The Supabase Realtime subscription will update it once AI completes.
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      addSaveToTop(res.data as any);
+      addSaveToTop(res.data);
+      if (res.data.duplicate) analytics.saveDuplicateDetected(res.data.platform);
+      else analytics.saveCreated({ platform: res.data.platform, source_app: 'manual' });
       setSaveState('success');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSuccess();

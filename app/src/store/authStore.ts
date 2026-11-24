@@ -5,6 +5,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import { Platform } from 'react-native';
 import { supabase } from '../services/supabase';
 import { apiClient } from '../services/apiClient';
+import analytics from '../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -201,6 +202,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         // itself (Google OAuth arrives here after the browser redirect)
         void fetchProfile().then(({ profile, pendingRestore }) => {
           set({ session, user: mapUser(session.user, profile), pendingAccountRestore: pendingRestore });
+          if (session.user.app_metadata?.provider === 'google') analytics.accountSignedIn('google');
         });
       } else if (session) {
         // Token refresh etc. — same account, keep its loaded profile
@@ -239,6 +241,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
             subscriptionStatus: 'trial',
           }),
         });
+        analytics.accountCreated('email');
       }
     } catch (err) {
       set({ error: extractErrorMessage(err) });
@@ -270,6 +273,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         user: mapUser(data.session.user, profile),
         pendingAccountRestore: pendingRestore,
       });
+      analytics.accountSignedIn('email');
     } catch (err) {
       set({ error: extractErrorMessage(err) });
       throw err;
@@ -286,6 +290,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   async signInWithApple(): Promise<void> {
     if (Platform.OS !== 'ios') return;
 
+    analytics.socialAuthAttempted('apple');
     set({ isLoading: true, error: null });
 
     try {
@@ -314,6 +319,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         user: mapUser(data.session.user, profile),
         pendingAccountRestore: pendingRestore,
       });
+      analytics.accountSignedIn('apple');
     } catch (err) {
       // User cancelled Apple Sign In — do not show an error
       const code = (err as Record<string, unknown>).code;
@@ -334,6 +340,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
    * and is wired in a future task.
    */
   async signInWithGoogle(): Promise<void> {
+    analytics.socialAuthAttempted('google');
     set({ isLoading: true, error: null });
 
     try {
@@ -354,6 +361,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   async signOut(): Promise<void> {
     set({ isLoading: true });
+    analytics.accountSignedOut();
     try {
       await supabase.auth.signOut();
     } finally {

@@ -46,6 +46,7 @@ import {
   unsubscribeFromSaveUpdates,
 } from '../services/realtime';
 import { openPaywall } from '../services/paywall';
+import analytics from '../services/analytics';
 import { CategoryPickerSheet } from '../components/CategoryPickerSheet';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuthStore } from '../store/authStore';
@@ -509,6 +510,14 @@ export default function HomeScreen(): React.JSX.Element {
 
   // ── Auto-fetch on focus when saves array is empty ─────────────────────────
 
+  // One library_viewed per visit (store read directly so the effect doesn't
+  // re-fire as the list changes while the screen is focused)
+  useFocusEffect(
+    useCallback(() => {
+      analytics.libraryViewed({ save_count: useSavesStore.getState().allSaves.length });
+    }, []),
+  );
+
   useFocusEffect(
     useCallback(() => {
       if (saves.length === 0) {
@@ -520,7 +529,10 @@ export default function HomeScreen(): React.JSX.Element {
   // Day-3 notification re-ask — 2s delay after mount (PRD §3.4.2)
   useEffect(() => {
     if (!notificationReaskDue) return;
-    const timer = setTimeout(() => setReaskModalVisible(true), REASK_DELAY_MS);
+    const timer = setTimeout(() => {
+      setReaskModalVisible(true);
+      analytics.notificationReaskShown();
+    }, REASK_DELAY_MS);
     return () => clearTimeout(timer);
   }, [notificationReaskDue]);
 
@@ -663,12 +675,16 @@ export default function HomeScreen(): React.JSX.Element {
   );
 
   const handleSwipeDone = useCallback(
-    (save: SaveData) => void markDone(save),
+    (save: SaveData) => {
+      analytics.librarySwipeGestureUsed({ action: 'done' });
+      void markDone(save);
+    },
     [markDone],
   );
 
   const handleSwipeDelete = useCallback(
     (save: SaveData) => {
+      analytics.librarySwipeGestureUsed({ action: 'delete' });
       Alert.alert('Delete this save?', undefined, [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -705,6 +721,7 @@ export default function HomeScreen(): React.JSX.Element {
           await apiClient.patch(`/saves/${save.id}`, { category_id: categoryId });
           if (cat) {
             updateSave({ id: save.id, category: { id: cat.id, name: cat.name } });
+            analytics.saveCategoryChanged({ save_id: save.id, new_category: cat.name });
           }
           void fetchCategories();
         } catch {
@@ -734,6 +751,7 @@ export default function HomeScreen(): React.JSX.Element {
   // ── Notification re-ask ───────────────────────────────────────────────────
 
   function handleReaskEnable(): void {
+    analytics.notificationReaskAccepted();
     setReaskModalVisible(false);
     if (Platform.OS === 'ios') {
       void Linking.openURL('app-settings:');

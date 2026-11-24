@@ -16,6 +16,7 @@ import { create } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import { apiClient } from '../services/apiClient';
+import analytics from '../services/analytics';
 import type { SaveData } from '../components/OshiCard';
 import { deleteCachedThumbnail } from '../utils/thumbnailCache';
 
@@ -409,6 +410,11 @@ export const useSavesStore = create<SavesStore>((set, get) => {
       activeCategoryId: categoryId,
       ...withDerivedSaves(s, s.allSaves, { activeCategoryId: categoryId }),
     });
+    if (categoryId !== s.activeCategoryId) {
+      analytics.libraryCategoryTabChanged(
+        s.categories.find((c) => c.id === categoryId)?.name ?? 'All',
+      );
+    }
   },
 
   // ── Search ────────────────────────────────────────────────────────────────
@@ -416,10 +422,13 @@ export const useSavesStore = create<SavesStore>((set, get) => {
 
   setSearchQuery(query): void {
     const s = get();
-    set({
-      searchQuery: query,
-      ...withDerivedSaves(s, s.allSaves, { searchQuery: query }),
-    });
+    const derived = withDerivedSaves(s, s.allSaves, { searchQuery: query });
+    set({ searchQuery: query, ...derived });
+    // HomeScreen debounces input, so this fires once per settled query
+    const trimmed = query.trim();
+    if (trimmed.length > 0) {
+      analytics.librarySearchPerformed({ query_length: trimmed.length, result_count: derived.saves.length });
+    }
   },
 
   setPlatformFilter(platforms): void {
@@ -451,6 +460,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
 
   async setSortOption(option): Promise<void> {
     set({ sortOption: option });
+    analytics.librarySortChanged({ sort: option });
     try {
       await AsyncStorage.setItem(SORT_STORAGE_KEY, option);
     } catch {
@@ -475,7 +485,9 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   // ── View mode ─────────────────────────────────────────────────────────────
 
   toggleViewMode(): void {
-    set((s) => ({ viewMode: s.viewMode === 'grid' ? 'list' : 'grid' }));
+    const next = get().viewMode === 'grid' ? 'list' : 'grid';
+    set({ viewMode: next });
+    analytics.libraryViewModeToggled(next);
   },
 
   // ── Single-item actions ───────────────────────────────────────────────────
@@ -510,6 +522,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   },
 
   async retrySave(save): Promise<void> {
+    analytics.saveRetried(save.id);
     set((s) =>
       withDerivedSaves(
         s,
@@ -535,6 +548,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   async undoAction(): Promise<void> {
     const { undoEntry } = get();
     if (!undoEntry) return;
+    analytics.undoActionUsed(undoEntry.action);
 
     if (undoEntry.action === 'deleted') {
       set((s) => ({
@@ -574,6 +588,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
 
   activateMultiSelect(initialSaveId): void {
     set({ isMultiSelectActive: true, selectedIds: new Set([initialSaveId]) });
+    analytics.libraryMultiSelectActivated();
   },
 
   deactivateMultiSelect(): void {
@@ -596,6 +611,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   async bulkMarkDone(): Promise<void> {
     const { selectedIds } = get();
     const ids = [...selectedIds];
+    analytics.libraryBulkActionPerformed({ action: 'done', count: ids.length });
     set((s) => ({
       ...withDerivedSaves(
         s,
@@ -612,6 +628,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   async bulkSkip(): Promise<void> {
     const { selectedIds } = get();
     const ids = [...selectedIds];
+    analytics.libraryBulkActionPerformed({ action: 'skip', count: ids.length });
     set((s) => ({
       ...withDerivedSaves(
         s,
@@ -631,6 +648,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   async bulkDelete(): Promise<void> {
     const { selectedIds } = get();
     const ids = [...selectedIds];
+    analytics.libraryBulkActionPerformed({ action: 'delete', count: ids.length });
     set((s) => ({
       ...withDerivedSaves(s, s.allSaves.filter((sv) => !selectedIds.has(sv.id))),
       isMultiSelectActive: false,
@@ -644,6 +662,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   async bulkMoveCategory(categoryId): Promise<void> {
     const { selectedIds } = get();
     const ids = [...selectedIds];
+    analytics.libraryBulkActionPerformed({ action: 'move', count: ids.length });
     const targetCat = get().categories.find((c) => c.id === categoryId);
     if (!targetCat) return;
     set((s) => ({

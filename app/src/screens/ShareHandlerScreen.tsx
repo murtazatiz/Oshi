@@ -31,6 +31,7 @@ import { useSavesStore } from '../store/savesStore';
 import type { SaveData } from '../components/OshiCard';
 import { detectPlatformFromUrl, getPlatformMeta } from '../constants/platforms';
 import { CategoryPickerSheet, type CategoryOption } from '../components/CategoryPickerSheet';
+import analytics from '../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform detection
@@ -136,10 +137,12 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
       }
 
       try {
-        const res = await apiClient.post<SaveData>('/saves', {
+        const res = await apiClient.post<SaveData & { duplicate?: boolean }>('/saves', {
           url: resolvedUrl,
           source_app: sourceApp,
         });
+        if (res.data.duplicate) analytics.saveDuplicateDetected(res.data.platform);
+        else analytics.saveCreated({ platform: res.data.platform, source_app: sourceApp });
 
         setSavedId(res.data.id);
         if (res.data.category) {
@@ -200,6 +203,7 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
     if (!savedId) return;
     try {
       await apiClient.patch(`/saves/${savedId}`, { category_id: cat.id });
+      analytics.saveCategoryChanged({ save_id: savedId, new_category: cat.name });
     } catch {
       // Non-fatal
     }

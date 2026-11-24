@@ -34,6 +34,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { useTheme } from '../theme/ThemeContext';
 import { apiClient, isLimitError } from '../services/apiClient';
+import analytics from '../services/analytics';
 import { useSavesStore } from '../store/savesStore';
 import type { MainStackParamList } from '../navigation/types';
 import { isValidHttpUrl } from '../utils/url';
@@ -113,11 +114,14 @@ async function importUrls(
     const url = urls[i] ?? '';
     onProgress(i, urls.length);
     try {
-      const res = await apiClient.post<{ duplicate?: boolean }>('/saves', { url });
+      const res = await apiClient.post<{ duplicate?: boolean; platform?: string }>('/saves', { url });
+      const platform = res.data.platform ?? 'other';
       if (res.data.duplicate) {
         result.duplicates++;
+        analytics.saveDuplicateDetected(platform);
       } else {
         result.added++;
+        analytics.saveCreated({ platform, source_app: 'import' });
         // Optimistically add to store so Library tab updates immediately
         addSaveToTop(res.data as never);
       }

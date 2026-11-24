@@ -168,6 +168,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
     try {
       await apiClient.patch(`/saves/${save.id}`, { user_note: text });
       updateSave({ id: save.id, user_note: text });
+      if (text.trim().length > 0) analytics.saveNoteAdded(save.id);
     } catch {
       // Non-fatal
     } finally {
@@ -272,6 +273,7 @@ export default function ContentDetailScreen(): React.JSX.Element {
     try {
       await apiClient.patch(`/saves/${save.id}`, { category_id: catId });
       updateSave({ id: save.id, category: { id: catId, name: catName } });
+      analytics.saveCategoryChanged({ save_id: save.id, new_category: catName });
     } catch {
       setSave((s) => s ? { ...s, category: save.category } : s);
     }

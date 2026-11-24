@@ -6,6 +6,7 @@ import Constants from 'expo-constants';
 
 import { useTheme } from '../../theme/ThemeContext';
 import { apiClient } from '../../services/apiClient';
+import analytics from '../../services/analytics';
 
 interface Props {
   onNext: () => void;
@@ -21,6 +22,8 @@ export default function StepNotificationPerm({ onNext, onSkip }: Props): React.J
     setIsRequesting(true);
     try {
       const { status } = await Notifications.requestPermissionsAsync();
+      if (status === 'granted') analytics.notificationPermissionGranted();
+      else analytics.notificationPermissionDenied();
 
       // Record the permission status in the backend regardless of outcome
       void apiClient.patch('/users/me', {

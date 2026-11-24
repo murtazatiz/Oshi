@@ -93,6 +93,8 @@ export function ReminderSettings(): React.JSX.Element {
     try {
       const { status } = await Notifications.requestPermissionsAsync();
       setNotificationPermission(status);
+      if (status === 'granted') analytics.notificationPermissionGranted();
+      else analytics.notificationPermissionDenied();
 
       if (status !== 'granted') {
         Alert.alert(

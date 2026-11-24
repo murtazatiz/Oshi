@@ -1,6 +1,10 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 import { supabase } from './supabase';
 import { LIMIT_TRIGGERS, openPaywall, type LimitErrorCode } from './paywall';
+import analytics from './analytics';
+
+/** PRD §8.1 — the count a SAVE_LIMIT_REACHED means the user has hit */
+const FREE_MONTHLY_SAVE_LIMIT = 20;
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -111,6 +115,7 @@ apiClient.interceptors.response.use(
       limitCode in LIMIT_TRIGGERS &&
       originalRequest?.skipPaywall !== true
     ) {
+      if (limitCode === 'SAVE_LIMIT_REACHED') analytics.saveLimitReached(FREE_MONTHLY_SAVE_LIMIT);
       openPaywall(LIMIT_TRIGGERS[limitCode as LimitErrorCode]);
       return Promise.reject(error);
     }

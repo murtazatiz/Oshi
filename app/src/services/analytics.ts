@@ -251,8 +251,9 @@ const analytics = {
 
   saveShared: (save_id: string) => track('save_shared', { save_id }),
 
-  saveDuplicateDetected: (url: string) =>
-    track('save_duplicate_detected', { url }),
+  // Platform only — saved URLs can be private (analytics plan §1: no PII)
+  saveDuplicateDetected: (platform: string) =>
+    track('save_duplicate_detected', { platform }),
 
   saveLimitReached: (count: number) =>
     track('save_limit_reached', { count }),

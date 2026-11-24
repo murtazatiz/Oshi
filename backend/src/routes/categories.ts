@@ -5,12 +5,11 @@ import { Errors } from '../middleware/errorHandler';
 import { prisma } from '../lib/prisma';
 import { invalidateSmartSortCache } from '../services/smartSortService';
 import { slugifyCategoryName } from '../services/notificationService';
+import { FREE_CUSTOM_CATEGORY_LIMIT } from '../constants/limits';
 import type { Prisma } from '@prisma/client';
 
 const router = Router();
 
-/** PRD §8.1 — custom categories a free user may create beyond the defaults */
-const FREE_CUSTOM_CATEGORY_LIMIT = 3;
 router.use(requireAuth);
 
 // ─────────────────────────────────────────────────────────────────────────────

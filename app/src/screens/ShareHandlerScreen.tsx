@@ -297,7 +297,7 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
             )}
             {status === 'limit' && (
               <Text style={[styles.statusText, { color: colors.warning }]}>
-                Monthly save limit reached — upgrade to keep saving
+                Free-plan limit reached — upgrade to keep saving
               </Text>
             )}
             {status === 'error' && (

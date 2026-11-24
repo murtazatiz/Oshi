@@ -98,7 +98,7 @@ interface ImportResult {
   added: number;
   duplicates: number;
   failed: number;
-  /** URLs not attempted because the monthly save limit was hit (PRD §8.1). */
+  /** URLs not attempted because a free-plan limit was hit (PRD §8.1 / §3.7.4). */
   notImported: number;
 }
 
@@ -152,7 +152,7 @@ function describeImportResult(r: ImportResult): string {
   if (r.duplicates > 0) parts.push(`${plural(r.duplicates, 'duplicate')} skipped`);
   if (r.failed > 0) parts.push(`${r.failed} failed`);
   if (r.notImported > 0) {
-    parts.push(`${r.notImported} not imported — monthly save limit reached`);
+    parts.push(`${r.notImported} not imported — free-plan limit reached`);
   }
   return parts.join(', ');
 }

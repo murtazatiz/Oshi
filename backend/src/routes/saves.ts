@@ -10,6 +10,7 @@ import {
   invalidateSmartSortCache,
 } from '../services/smartSortService';
 import { detectPlatform } from '../services/platform';
+import { FREE_CUSTOM_CATEGORY_LIMIT, FREE_MONTHLY_SAVE_LIMIT } from '../constants/limits';
 import type { Prisma } from '@prisma/client';
 
 const router = Router();
@@ -350,9 +351,30 @@ router.post(
         user.subscriptionStatus === 'pro' || user.subscriptionStatus === 'trial';
 
       // ── Free tier save limit — PRD §8.1 (20 saves/month) ─────────────────
-      if (!isPro && user.itemsSavedThisMonth >= 20) {
+      if (!isPro && user.itemsSavedThisMonth >= FREE_MONTHLY_SAVE_LIMIT) {
         next(Errors.saveLimitReached());
         return;
+      }
+
+      // ── Downgraded with too many categories — PRD §3.7.4 ──────────────────
+      // A user who created more than 3 custom categories while on Pro keeps
+      // them all after downgrading, but can't add new saves until they're
+      // back within the free limit (or upgrade). Seeded defaults don't count.
+      if (!isPro) {
+        const customCategoryCount = await prisma.category.count({
+          where: { userId, isSystemDefault: false },
+        });
+        if (customCategoryCount > FREE_CUSTOM_CATEGORY_LIMIT) {
+          next(
+            new AppError(
+              'CATEGORY_LIMIT_REACHED',
+              `The free plan allows ${FREE_CUSTOM_CATEGORY_LIMIT} custom categories and you have ${customCategoryCount}. ` +
+                'Delete some, or upgrade to Oshi Pro, to keep saving.',
+              403,
+            ),
+          );
+          return;
+        }
       }
 
       // ── Duplicate URL check — API contract §3 ─────────────────────────────

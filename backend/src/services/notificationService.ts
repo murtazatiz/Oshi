@@ -123,6 +123,9 @@ export interface NotificationPayload {
   deepLinkUrl?: string;
   /** Optional thumbnail for rich notifications (PRD §3.4.1) */
   thumbnailUrl?: string;
+  /** notification_logs row id; the app echoes it to POST /notifications/log-open on tap */
+  notificationLogId?: string;
+  notificationType?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -150,9 +153,11 @@ export async function sendPushNotification(
     sound: 'default',
   };
 
-  if (payload.deepLinkUrl) {
-    message.data = { url: payload.deepLinkUrl };
-  }
+  const data: Record<string, string> = {};
+  if (payload.deepLinkUrl) data.url = payload.deepLinkUrl;
+  if (payload.notificationLogId) data.notification_log_id = payload.notificationLogId;
+  if (payload.notificationType) data.notification_type = payload.notificationType;
+  if (Object.keys(data).length > 0) message.data = data;
 
   if (payload.thumbnailUrl) {
     message.richContent = { image: payload.thumbnailUrl };
@@ -228,6 +233,30 @@ export async function logNotification(opts: {
   return log.id;
 }
 
+/**
+ * Send a push and record it in notification_logs. The log row is written
+ * first so the push can carry its id: when the user taps the notification,
+ * the app sends that id to POST /notifications/log-open (PRD §3.4 open
+ * tracking). If Expo rejects the push, the row is removed again so open
+ * rates only count delivered pushes.
+ */
+async function sendLoggedPush(
+  payload: NotificationPayload,
+  log: Parameters<typeof logNotification>[0],
+): Promise<void> {
+  const logId = await logNotification(log);
+  const sent = await sendPushNotification({
+    ...payload,
+    notificationLogId: logId,
+    notificationType: log.notificationType,
+  });
+  if (!sent) {
+    await prisma.notificationLog.delete({ where: { id: logId } }).catch(() => {
+      // Already gone — nothing to clean up
+    });
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain-specific senders
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,16 +300,12 @@ export async function sendDailyReminder(opts: {
   };
   if (opts.thumbnailUrl) pushPayload.thumbnailUrl = opts.thumbnailUrl;
 
-  const sent = await sendPushNotification(pushPayload);
-
-  if (sent) {
-    await logNotification({
-      userId,
-      notificationType: 'daily_reminder',
-      categoryId: opts.categoryId,
-      itemCount: unreadCount,
-    });
-  }
+  await sendLoggedPush(pushPayload, {
+    userId,
+    notificationType: 'daily_reminder',
+    categoryId: opts.categoryId,
+    itemCount: unreadCount,
+  });
 }
 
 /**
@@ -303,20 +328,10 @@ export async function sendMorningDigest(opts: {
         ? `Yesterday you saved "${topSaveTitle}".`
         : `Yesterday you saved ${savedYesterday} items — including "${topSaveTitle}".`;
 
-  const sent = await sendPushNotification({
-    token,
-    title: 'Your morning digest ☀️',
-    body,
-    deepLinkUrl: 'oshi://library',
-  });
-
-  if (sent) {
-    await logNotification({
-      userId,
-      notificationType: 'morning_digest',
-      itemCount: savedYesterday,
-    });
-  }
+  await sendLoggedPush(
+    { token, title: 'Your morning digest ☀️', body, deepLinkUrl: 'oshi://library' },
+    { userId, notificationType: 'morning_digest', itemCount: savedYesterday },
+  );
 }
 
 /**
@@ -327,19 +342,15 @@ export async function sendTrialExpiryWarning(opts: {
   userId: string;
   token: string;
 }): Promise<void> {
-  const sent = await sendPushNotification({
-    token: opts.token,
-    title: 'Your Oshi Pro trial ends tomorrow',
-    body: 'Keep unlimited saves and smart reminders.',
-    deepLinkUrl: 'oshi://settings/subscription',
-  });
-
-  if (sent) {
-    await logNotification({
-      userId: opts.userId,
-      notificationType: 'trial_expiry_warning',
-    });
-  }
+  await sendLoggedPush(
+    {
+      token: opts.token,
+      title: 'Your Oshi Pro trial ends tomorrow',
+      body: 'Keep unlimited saves and smart reminders.',
+      deepLinkUrl: 'oshi://settings/subscription',
+    },
+    { userId: opts.userId, notificationType: 'trial_expiry_warning' },
+  );
 }
 
 /**
@@ -361,17 +372,13 @@ export async function sendTrialExpiryDay(opts: {
     data: { trialExpiryBannerDue: true },
   });
 
-  const sent = await sendPushNotification({
-    token: opts.token,
-    title: 'Your Oshi Pro trial ends today',
-    body: "Upgrade to keep unlimited saves and smart reminders.",
-    deepLinkUrl: 'oshi://settings/subscription',
-  });
-
-  if (sent) {
-    await logNotification({
-      userId: opts.userId,
-      notificationType: 'trial_expiry_day',
-    });
-  }
+  await sendLoggedPush(
+    {
+      token: opts.token,
+      title: 'Your Oshi Pro trial ends today',
+      body: 'Upgrade to keep unlimited saves and smart reminders.',
+      deepLinkUrl: 'oshi://settings/subscription',
+    },
+    { userId: opts.userId, notificationType: 'trial_expiry_day' },
+  );
 }

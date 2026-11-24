@@ -14,6 +14,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 
 import { useTheme } from '../theme/ThemeContext';
 import { navigationRef } from './navigationRef';
+import { getLaunchNotificationUrl, subscribeToNotificationUrls } from '../services/notificationTaps';
 import { useOnboardingStore } from '../store/onboardingStore';
 import { useAuthStore } from '../store/authStore';
 
@@ -121,6 +122,24 @@ const linking: LinkingOptions<RootStackParamList> = {
         },
       },
     },
+  },
+  /**
+   * Push notification taps carry an oshi:// URL (e.g. a reminder's category
+   * tab). Feeding them through the linking config means a tap that cold-
+   * starts the app still routes once navigation mounts.
+   */
+  async getInitialURL() {
+    const url = await Linking.getInitialURL();
+    if (url) return url;
+    return getLaunchNotificationUrl();
+  },
+  subscribe(listener) {
+    const linkSubscription = Linking.addEventListener('url', ({ url }) => listener(url));
+    const unsubscribeNotifications = subscribeToNotificationUrls(listener);
+    return () => {
+      linkSubscription.remove();
+      unsubscribeNotifications();
+    };
   },
   /**
    * oshi://notifications/enable deep links to the OS notification settings

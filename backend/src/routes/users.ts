@@ -140,10 +140,16 @@ const getMeSelect = {
 //     Set to true by the trial_expiry_day BullMQ job.
 //     App renders the "Your Pro trial ends today — Upgrade Now" top banner.
 //
-//   upsell_banner_due (PRD §8.3 "Day 5 soft upsell banner … for free users"):
-//     true when subscription_status = 'free' AND the account is ≥ 5 days old.
-//     Every signup starts a 7-day trial, so in practice this is every user
-//     whose trial has ended. The app owns dismissal (hidden for 7 days).
+//   upsell_banner_due (PRD §8.3 "Day 5 soft upsell banner"):
+//     true for trial users whose account is ≥ 5 days old — a conversion
+//     nudge in the last days of the 7-day trial. (Every signup starts on a
+//     trial, so "free users" in §8.3 can only mean not-yet-paying users; the
+//     post-trial free state has its own banner below.) The app snoozes it.
+//
+//   downgrade_banner_due (PRD §3.7.4):
+//     true on the free plan — after a trial ends or a subscription expires.
+//     App renders "You're on the free plan — some features are limited",
+//     dismissible once per session.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get(
   '/me',
@@ -192,8 +198,12 @@ router.get(
       }
 
       const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-      if (user.subscriptionStatus === 'free' && user.createdAt < fiveDaysAgo) {
+      if (user.subscriptionStatus === 'trial' && user.createdAt < fiveDaysAgo) {
         response.upsell_banner_due = true;
+      }
+
+      if (user.subscriptionStatus === 'free') {
+        response.downgrade_banner_due = true;
       }
 
       // PRD §3.7.5 — a soft-deleted user signing back in within the window is

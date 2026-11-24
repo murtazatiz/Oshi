@@ -166,8 +166,12 @@ interface SavesState {
   notificationReaskDue: boolean;
   trialExpiryBannerDue: boolean;
   trialBannerDismissed: boolean;
-  /** PRD §8.3 day-5 soft upsell for free users (server flag, minus a 7-day snooze) */
+  /** PRD §8.3 day-5 soft upsell for trial users (server flag, minus a 7-day snooze) */
   upsellBannerDue: boolean;
+  /** PRD §3.7.4 free-plan banner (server flag) */
+  downgradeBannerDue: boolean;
+  /** "Dismissible once per session" — in memory only, so it returns next launch */
+  downgradeBannerDismissed: boolean;
 }
 
 interface SavesActions {
@@ -223,6 +227,7 @@ interface SavesActions {
   checkUserFlags: () => Promise<void>;
   dismissTrialBanner: () => void;
   dismissUpsellBanner: () => void;
+  dismissDowngradeBanner: () => void;
 
   // Helpers
   loadSortPreference: () => Promise<void>;
@@ -295,6 +300,8 @@ export const useSavesStore = create<SavesStore>((set, get) => {
   trialExpiryBannerDue: false,
   trialBannerDismissed: false,
   upsellBannerDue: false,
+  downgradeBannerDue: false,
+  downgradeBannerDismissed: false,
 
   // ── Categories ────────────────────────────────────────────────────────────
 
@@ -734,6 +741,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
         notification_reask_due?: boolean;
         trial_expiry_banner_due?: boolean;
         upsell_banner_due?: boolean;
+        downgrade_banner_due?: boolean;
       }>('/users/me');
 
       let isUpsellSnoozed = false;
@@ -748,6 +756,7 @@ export const useSavesStore = create<SavesStore>((set, get) => {
         notificationReaskDue: res.data.notification_reask_due ?? false,
         trialExpiryBannerDue: res.data.trial_expiry_banner_due ?? false,
         upsellBannerDue: (res.data.upsell_banner_due ?? false) && !isUpsellSnoozed,
+        downgradeBannerDue: res.data.downgrade_banner_due ?? false,
       });
     } catch {
       // Ignore
@@ -756,6 +765,11 @@ export const useSavesStore = create<SavesStore>((set, get) => {
 
   dismissTrialBanner(): void {
     set({ trialBannerDismissed: true });
+  },
+
+  dismissDowngradeBanner(): void {
+    set({ downgradeBannerDismissed: true });
+    analytics.downgradeBannerDismissed();
   },
 
   dismissUpsellBanner(): void {
@@ -846,6 +860,7 @@ export function useSavesActions() {
       checkUserFlags: s.checkUserFlags,
       dismissTrialBanner: s.dismissTrialBanner,
       dismissUpsellBanner: s.dismissUpsellBanner,
+      dismissDowngradeBanner: s.dismissDowngradeBanner,
       loadSortPreference: s.loadSortPreference,
     })),
   );

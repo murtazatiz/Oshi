@@ -371,6 +371,9 @@ function NotificationReaskModal({
 // HomeScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Module-level so it survives remounts within one app session. */
+let hasLoggedDowngradeBannerView = false;
+
 export default function HomeScreen(): React.JSX.Element {
   const navigation = useNavigation<NavProp>();
   const route = useRoute<RouteProp<LibraryStackParamList, 'LibraryHome'>>();
@@ -389,6 +392,8 @@ export default function HomeScreen(): React.JSX.Element {
   const trialExpiryBannerDue = useSavesStore((s) => s.trialExpiryBannerDue);
   const trialBannerDismissed = useSavesStore((s) => s.trialBannerDismissed);
   const upsellBannerDue = useSavesStore((s) => s.upsellBannerDue);
+  const downgradeBannerDue = useSavesStore((s) => s.downgradeBannerDue);
+  const downgradeBannerDismissed = useSavesStore((s) => s.downgradeBannerDismissed);
 
   const {
     fetchCategories,
@@ -418,6 +423,7 @@ export default function HomeScreen(): React.JSX.Element {
     checkUserFlags,
     dismissTrialBanner,
     dismissUpsellBanner,
+    dismissDowngradeBanner,
     loadSortPreference,
   } = useSavesActions();
 
@@ -816,6 +822,14 @@ export default function HomeScreen(): React.JSX.Element {
 
   const showTrialBanner = trialExpiryBannerDue && !trialBannerDismissed;
   const showUpsellBanner = upsellBannerDue && !showTrialBanner;
+  const showDowngradeBanner = downgradeBannerDue && !downgradeBannerDismissed;
+
+  // downgrade_banner_viewed once per app session, not on every re-render
+  useEffect(() => {
+    if (!showDowngradeBanner || hasLoggedDowngradeBannerView) return;
+    hasLoggedDowngradeBannerView = true;
+    analytics.downgradeBannerViewed();
+  }, [showDowngradeBanner]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]} edges={['top']}>
@@ -994,11 +1008,11 @@ export default function HomeScreen(): React.JSX.Element {
         </View>
       )}
 
-      {/* ── Day-5 soft upsell banner (PRD §8.3, free users) ────────────── */}
+      {/* ── Day-5 soft upsell banner (PRD §8.3, trial users) ───────────── */}
       {showUpsellBanner && (
         <View style={[styles.trialBanner, { backgroundColor: colors.accent + '14' }]}>
           <Text style={[styles.trialBannerText, { color: colors.textPrimary }]}>
-            You're on the free plan — get unlimited saves with Oshi Pro
+            Enjoying Oshi Pro? Keep it after your trial
           </Text>
           <View style={styles.trialBannerActions}>
             <TouchableOpacity
@@ -1009,6 +1023,27 @@ export default function HomeScreen(): React.JSX.Element {
               <Text style={styles.trialUpgradeText}>See Pro</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={dismissUpsellBanner} hitSlop={8} accessibilityLabel="Dismiss banner">
+              <Text style={[styles.trialDismiss, { color: colors.textMuted }]}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ── Free-plan banner (PRD §3.7.4) — dismissible once per session ─ */}
+      {showDowngradeBanner && (
+        <View style={[styles.trialBanner, { backgroundColor: colors.accent + '14' }]}>
+          <Text style={[styles.trialBannerText, { color: colors.textPrimary }]}>
+            You're on the free plan — some features are limited. Upgrade to Pro.
+          </Text>
+          <View style={styles.trialBannerActions}>
+            <TouchableOpacity
+              onPress={() => openPaywall('downgrade_banner')}
+              style={[styles.trialUpgradeBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}
+              accessibilityLabel="Upgrade to Pro"
+            >
+              <Text style={styles.trialUpgradeText}>Upgrade</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={dismissDowngradeBanner} hitSlop={8} accessibilityLabel="Dismiss banner">
               <Text style={[styles.trialDismiss, { color: colors.textMuted }]}>✕</Text>
             </TouchableOpacity>
           </View>

@@ -59,8 +59,12 @@ const HEADLINES: Record<PaywallTrigger, { title: string; sub: string }> = {
     sub: 'Upgrade to Oshi Pro to organise your library with unlimited categories.',
   },
   upsell_banner: {
-    title: 'Get more out of Oshi',
+    title: 'Keep Pro after your trial',
     sub: 'Unlimited saves and categories, a morning digest, and priority AI processing.',
+  },
+  downgrade_banner: {
+    title: 'Get everything back with Pro',
+    sub: 'Your saves and categories are all still here. Pro lifts the free-plan limits again.',
   },
   trial_expiry: {
     title: 'Your Pro trial is ending',

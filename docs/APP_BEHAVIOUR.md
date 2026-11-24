@@ -111,6 +111,8 @@ Every store mutation: update local state (via `withDerivedSaves`) → call API �
 - JWT is synced to the iOS App Group (`oshi_shared_session`) for the share extension: on sign-in, session restore, token refresh, foreground; cleared on sign-out.
 - Rate limits: global limiter + tighter per-route (e.g. 60/min/user on POST /saves). RevenueCat webhook authenticates via the `REVENUECAT_WEBHOOK_AUTH_HEADER` shared secret.
 - RLS is enabled on every Supabase table.
+- Every sign-in path (email, Apple, Google OAuth, session restore) loads the profile through one `authStore.fetchProfile()`. Token refreshes keep the loaded profile for the same account; they used to reset the plan to `'trial'` (FIX-20261124-03).
+- **Account restore (PRD §3.7.5):** if the signed-in account is pending deletion (`/users/me` → `account_deleted_at`), a root-level prompt offers "Restore my account" (`POST /users/me/restore`) or "Keep it deleted and sign out". After 30 days the purge removes the account.
 
 ## 7. Navigation gate & deep links
 
@@ -119,6 +121,8 @@ Root gate: `Main` renders only when `session !== null` **AND** `onboardingStore.
 ## 8. Notifications & reminder engine
 
 - Cron (`cron/scheduler.ts`, UTC) runs **every minute**: users whose `reminder_time` HH:MM matches now and whose `reminder_days` includes today get a push — **skipped** if they have zero unread saves or opened the app in the last 2 hours. Notification deep-links to the category with most unread (`oshi://library/:slug`); opens are logged via `POST /notifications/log-open`.
+- **Per-category reminders (Pro, PRD §3.7.2):** a category with `reminder_override_time` gets its own push at that time, on the user's reminder days and under the same skip rules. Pro users' daily reminder then features only categories without their own time. Overrides left after a downgrade are ignored, not deleted. Set from Settings → edit category.
+- **Taps:** every push carries `{ url, notification_log_id, notification_type }` (ADR-0022). A tap opens `url` through the navigation linking config, both cold and warm, and calls `POST /notifications/log-open`. Times are edited in local time and stored in UTC via `utils/reminderTime`.
 - Monthly cron `0 0 1 * *` resets every user's `items_saved_this_month` to 0.
 - Nightly 02:00 UTC dead-link checker updates `link_status`.
 - Trial-expiry pushes are scheduled through the delayed `notification-scheduler` queue.
@@ -162,3 +166,4 @@ Root gate: `Main` renders only when `session !== null` **AND** `onboardingStore.
 | 1.2 | 2026-11-23 04:11 | Paywall wiring and the custom-category limit. |
 | 1.3 | 2026-11-23 04:23 | Morning Digest, shared reminder editor, day-5 upsell banner. |
 | 1.4 | 2026-11-23 07:05 | Nightly purge; category management through savesStore. |
+| 1.5 | 2026-11-24 04:48 | Account restore, profile kept on refresh, per-category reminders, notification tap routing and open logging. |

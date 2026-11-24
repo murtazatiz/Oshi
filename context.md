@@ -449,7 +449,7 @@ Per cursor rules: JWT/session stored in Expo SecureStore. Zustand persist only f
 - [ ] Android share handler full flow
 - [ ] Reanimated 2 animations (currently using RN core Animated)
 - [x] Morning Digest notification (Pro feature) — 2026-11-23, needs the manual migration (ADR-0020)
-- [ ] Per-category reminder overrides (Pro feature)
+- [x] Per-category reminder overrides (Pro feature) — 2026-11-24
 - [ ] EAS production submit credentials (placeholders in eas.json)
 
 ### Not Yet Started

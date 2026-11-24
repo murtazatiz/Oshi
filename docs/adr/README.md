@@ -29,5 +29,6 @@
 | [0019](0019-free-category-limit-counts-custom-only.md) | The free-tier category limit counts custom categories only | Accepted | 2026-11-23 |
 | [0020](0020-manual-sql-migrations-until-baseline.md) | Schema changes ship as hand-run SQL until a Prisma migrations baseline exists | Accepted | 2026-11-23 |
 | [0021](0021-purge-deletes-dependents-explicitly.md) | The soft-delete purge deletes dependent rows explicitly and removes the auth account | Accepted | 2026-11-23 |
+| [0022](0022-push-carries-log-id-taps-route-via-linking.md) | Pushes carry their log id; taps route through the linking config | Accepted | 2026-11-24 |
 
-**Doc version:** 1.1 · **Created:** 2026-09-18 17:34 UTC · **Last updated:** 2026-11-23 04:11 UTC (ADR-0018–0021)
+**Doc version:** 1.1 · **Created:** 2026-09-18 17:34 UTC · **Last updated:** 2026-11-23 04:11 UTC (ADR-0018–0022)

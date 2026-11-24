@@ -124,6 +124,8 @@ src/
   array fields.
 - Rate limiting: a global limiter is applied; tighter per-route limiters exist
   (e.g. `savesLimiter` on `POST /saves`).
+- Pushes go through `notificationService.sendLoggedPush` only (logs first,
+  sends the log id + deep link in the payload).
 - **Never AI-process inside a request.** `POST /saves` returns `201` in <300ms
   and enqueues a BullMQ job; the worker does metadata fetch + OpenAI call.
 
@@ -144,6 +146,9 @@ Cron (`cron/scheduler.ts`, all UTC):
   hour:minute matches now and whose `reminder_days` includes today; skips users
   with zero unread saves or who opened the app within the last 2h.
 - Monthly reset: `0 0 1 * *` resets `items_saved_this_month` to 0.
+- Per-category reminders (Pro): the same every-minute tick sends a category's
+  own reminder at its `reminder_override_time`; Pro users' daily reminder
+  then skips categories that have one.
 - Morning Digest: every minute, Pro/trial users with `morning_digest` on whose
   local time (`users.timezone`) is 08:00 get a summary of yesterday's saves.
 - Nightly purge: `0 3 * * *` permanently removes soft-deleted saves (>7 days)
@@ -178,13 +183,16 @@ src/
   screens/      auth/, onboarding/, library/, search/, settings/ + top-level screens
   components/   OshiCard, CategoryTabs, StreakDisplay, UndoToast, *SkeletonCard,
                 ReminderSettings (shared by Settings + RemindersScreen),
-                CategoryPickerSheet (the only category picker), etc.
+                CategoryPickerSheet (the only category picker), TimePicker,
+                AccountRestorePrompt, etc.
   store/        Zustand: authStore, savesStore, onboardingStore, subscriptionStore
   services/     apiClient (axios), supabase, analytics, errorMonitoring, purchases,
-                offlineQueue, shareExtension, realtime, paywall
+                offlineQueue, shareExtension, realtime, paywall,
+                notificationTaps (push tap → deep link + log-open, ADR-0022)
   lib/          supabase.ts (re-export for back-compat)
   theme/        index.ts (design tokens), ThemeContext.tsx (light/dark)
-  utils/        thumbnailCache.ts
+  utils/        thumbnailCache.ts, reminderTime.ts (local↔UTC reminder times —
+                always use it; never stamp a local time "+00")
 share-extension/  ShareExtension.tsx (iOS App Group pending-share handler)
 plugins/          withShareExtension.js, withAndroidShareTarget.js (Expo config plugins)
 ```
@@ -234,7 +242,8 @@ colours/sizes. Light/dark is provided via `ThemeContext`.
   `POST /saves/:id/restore` (undo a soft delete), `POST /saves/:id/retry`
 - **categories**: `GET`, `POST`, `PATCH /:id`, `DELETE /:id` (deletes move saves to "Other")
 - **engagement**: `POST /engagement/signal` (feeds the AI smart-sort)
-- **users**: `GET /users/me`, `PATCH /users/me`, `POST /users/avatar`, `DELETE /users/me`
+- **users**: `GET /users/me`, `PATCH /users/me`, `POST /users/avatar`, `DELETE /users/me`,
+  `POST /users/me/restore` (undo deletion inside the 30-day window)
 - **notifications**: register token, log opens, etc.
 - **subscriptions**: `POST /subscriptions/webhook` (RevenueCat; validated via
   `REVENUECAT_WEBHOOK_AUTH_HEADER`) + status read

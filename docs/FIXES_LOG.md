@@ -75,6 +75,61 @@ Entry template:
 
 ---
 
+## 2026-11-24 (session 04:10–04:50 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
+
+### FIX-20261124-01 — expo-share-intent required SDK 55; expo-linking peer restored
+- **Area:** app · **Severity:** bug (build)
+- **Symptom:** `expo-share-intent` was pinned at `^6.0.0`, which requires Expo SDK 55; the app is on SDK 54. This was the open item recorded on 2026-11-23, and it risked a broken Android share-intent build.
+- **Root cause, plus a correction:** the pin predates this branch. Separately, **FIX-20260918-20 was wrong to remove `expo-linking`**: the app never imports it, but `expo-share-intent` imports it at runtime (`useLinkingURL`, `createURL`) and declares it as a peer dependency. npm had been quietly nesting an SDK 55 build (`expo-linking@55.0.7`) under share-intent.
+- **Fix:** `expo-share-intent@5.1.1`, the line whose peer range is `expo ^54`. `expo-linking ~8.0.12` (SDK 54) is a direct dependency again, shared with share-intent. Also applied `expo install --fix` patch alignments within SDK 54. `expo install --check` now reports "Dependencies are up to date".
+- **Verified by:** app tsc · `expo install --check`.
+- **Commit:** `ec15641`.
+
+### FIX-20261124-02 — Signing back in during the 30-day window gave no restore offer (PRD §3.7.5)
+- **Area:** backend + app · **Severity:** missing feature
+- **Fix:** `GET /users/me` reports `account_deleted_at` and `purge_after` for an account pending deletion. `POST /users/me/restore` clears `deleted_at` inside the window (404 afterwards); the window comes from `purgeService.purgeDate`. All four sign-in paths (email, Apple, Google OAuth, session restore) load the profile through one `fetchProfile()` (Apple sign-in previously skipped it). A root-level `AccountRestorePrompt` offers "Restore my account" or "Keep it deleted and sign out", and shows the purge date.
+- **Verified by:** both tsc · TC-AUTH-08.
+- **Commit:** `189a7b2`.
+
+### FIX-20261124-03 — Free users looked like trial users an hour into a session
+- **Area:** app · **Severity:** bug
+- **Symptom:** After the first hourly token refresh, a free user's UI behaved as if they were on a trial: the category gate, the Morning Digest switch and the Subscription screen all used the wrong plan. The server still enforced the real limits.
+- **Root cause:** the auth listener rebuilt the user from the JWT alone on every event that carried a session, including `TOKEN_REFRESHED`. That discarded the backend profile, and `subscriptionStatus` fell back to its `'trial'` default.
+- **Fix:** refresh events keep the profile already loaded for the same account (`userForSession`); `_setSession` does the same.
+- **Verified by:** app tsc · TC-AUTH-09.
+- **Commit:** `189a7b2`.
+
+### FIX-20261124-04 — Per-category reminder times (Pro) didn't exist
+- **Area:** backend + app · **Severity:** missing feature (sold on the paywall)
+- **Fix:** The reminder cron also sends a category's own reminder at its `reminder_override_time` (Pro/trial users, on their reminder days, with the same skip rules). Pro users' daily reminder then skips categories that have their own time. Overrides left after a downgrade are ignored, not deleted. `PATCH /categories/:id` validates the time format and rejects setting one on the free plan (403). In Settings, the category edit sheet has an "Own reminder time · Pro" switch with a time picker, and category rows show the time. `TimePicker` moved to `components/`, and local↔UTC conversion moved to `utils/reminderTime`.
+- **Also fixed:** the reminder editor read times back via 1 January 1970 but saved them using today's date, so in timezones with daylight saving a reminder read back an hour off in summer. Both directions now use today's date (round-trip tested in Kolkata, New York, London and UTC).
+- **Verified by:** both tsc · TC-NOTIF-09.
+- **Commit:** `2ae7ceb`.
+
+### FIX-20261124-05 — Notification taps didn't follow their link, and opens were never logged
+- **Area:** backend + app · **Severity:** bug
+- **Symptom:** Tapping a reminder opened the app wherever it last was, not the category in the push. `POST /notifications/log-open` was never called, so no opens were recorded.
+- **Root cause:** the app had no notification-response handling. The backend also logged pushes after sending them, so no push carried the log id that `log-open` needs.
+- **Fix:** ADR-0022: `sendLoggedPush` (log first, id in the payload, row deleted if the send fails) for all four push types; `services/notificationTaps` feeds taps into the linking config (cold start and while running) and records the open.
+- **Verified by:** both tsc · TC-NOTIF-03, TC-NOTIF-08.
+- **Commit:** `f85a35b`.
+
+### FIX-20261124-06 — The reminder time picked during onboarding was stored in the wrong timezone
+- **Area:** app · **Severity:** bug
+- **Symptom:** A 7 PM reminder picked in onboarding by a user in India fired at 00:30 local time, and Settings showed "12:30 AM". The Skip default had the same problem (7 PM UTC, not 7 PM local).
+- **Root cause:** `StepReminder.toApiTime` appended `+00` to the local time without converting it.
+- **Fix:** both paths use `utils/reminderTime.localToUtcTimetz`.
+- **Verified by:** app tsc · TC-NOTIF-10.
+- **Commit:** `82b7968`.
+
+### FIX-20261124-07 — Most of the analytics plan wasn't measured
+- **Area:** app · **Severity:** missing instrumentation
+- **Fix:** 26 never-called helpers are now fired from the single place that owns each action (auth store, saves store, save creation, the API client's limit path, and the relevant screens). See commit `82b7968` for the full list. `save_duplicate_detected` now sends the platform instead of the URL (plan §1: no PII). Left uncalled on purpose: `trial_started`, `trial_expired` and `subscription_cancelled` are server-side events in the plan, and the backend has no analytics client; the downgrade-banner events have no banner yet. `SaveUrlScreen`'s `as any` is now properly typed.
+- **Verified by:** app tsc; a scan confirms only those five helpers (plus the `app_version` constant) remain uncalled · TC-ANL-01.
+- **Commit:** `82b7968`.
+
+---
+
 ## 2026-11-23, backlog wave (06:10–07:05 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
 
 The remaining items from the 2026-09-18 architecture review's backlog that didn't need a product decision.
@@ -303,3 +358,4 @@ The remaining items from the 2026-09-18 architecture review's backlog that didn'
 | 1.2 | 2026-11-23 04:11 | Paywall wiring (FIX-20261123-01) and custom-category limit (FIX-20261123-02). |
 | 1.3 | 2026-11-23 04:23 | Reminders screen, Morning Digest persistence + sender, day-5 upsell banner (FIX-20261123-03…05). |
 | 1.4 | 2026-11-23 07:05 | Backlog wave: fonts, dark-mode navigation, category pickers, Settings categories, purge (FIX-20261123-06…10); expo-share-intent open item. |
+| 1.5 | 2026-11-24 04:48 | FIX-20261124-01…07: share-intent/SDK fix (+ expo-linking correction), account restore, plan-on-refresh, per-category reminders, notification taps, onboarding UTC, analytics. |

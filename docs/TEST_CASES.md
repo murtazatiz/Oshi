@@ -36,6 +36,8 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | TC-AUTH-01 | P0 | e2e | Signup seeds account | Complete onboarding through account creation with a fresh email | Session created; `GET /users/me` shows `subscription_status: "trial"`, `trial_started_at` set; `GET /categories` returns exactly the 11 **PRD §3.2.1** defaults: Learning, Business, Travel, Food, Fitness, Entertainment, Shopping, Inspiration, Tech, People, Other (seeding previously used non-PRD names — FIX-20260918-15) |
 | TC-AUTH-02 | P0 | app | Onboarding gate | Create account (step 5 of 9), kill the app, reopen | App resumes **onboarding**, not the Library — Main requires session AND onboarding-complete (ADR-0008) |
 | TC-AUTH-03 | P0 | e2e | Password reset loop | Request reset from Login → open email link `oshi://auth/reset?token=…` → set new password | `POST /auth/reset-password {email}` → 200 (even for unknown email); deep link opens the reset screen; `POST /auth/update-password {token,new_password}` → 200; new password signs in, old doesn't. **Regression guard for FIX-20260918-11** (this flow used to 422/404 end-to-end) |
+| TC-AUTH-08 | P0 | e2e | Account restore within 30 days | Delete the account (Settings), then sign back in, once with email and once with Apple/Google. Choose **Restore**; repeat and choose **Keep it deleted**. Separately, set `deleted_at` to 31 days ago and sign in | A "Welcome back" prompt appears on every sign-in path, showing the purge date. Restore: the app works normally and `deleted_at` is null. Keep deleted: signed out, and the account stays queued. Past the window: `POST /users/me/restore` → 404 (and after the purge the account no longer exists) |
+| TC-AUTH-09 | P1 | app | Plan survives token refresh | As a free user, keep the app open past a token refresh (≈1h, or force one) | Settings still says Free, "+ Add Category" still shows (Pro) at the limit, and the Morning Digest switch still opens the paywall. **Regression guard for FIX-20261124-03** (free users used to flip to "trial" after the refresh) |
 | TC-AUTH-07 | P1 | api | Signin error code | `POST /auth/signin` with a wrong password | `401` with `code: "INVALID_CREDENTIALS"` per contract §2 (was `UNAUTHORISED` — FIX-20260918-16); message doesn't reveal whether the email exists |
 | TC-AUTH-04 | P1 | app | Sign out hygiene | Sign out from Settings | Returned to Auth stack; SecureStore session cleared; iOS App Group JWT cleared (share extension now queues offline instead of posting) |
 | TC-AUTH-05 | P0 | app | Session restore + silent refresh | Reopen app with a stored (possibly expired) session | Library loads without a login prompt; on 401 the apiClient refreshes once and retries; if refresh fails, user is signed out cleanly |
@@ -140,6 +142,9 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | TC-NOTIF-04 | P2 | e2e | Monthly reset | On the 1st (UTC) or by manually running the cron | Every user's `items_saved_this_month` = 0; free users can save again |
 | TC-NOTIF-05 | P1 | e2e | Morning Digest delivery | Pro user, digest on, push token set, `timezone` = e.g. `Asia/Kolkata`; save 3 items one day; wait for 08:00 local the next day. Repeat with a user who saved nothing yesterday | First user gets *"Your morning digest ☀️ — Yesterday you saved 3 items — including \"…\""* at 08:00 **local** (02:30 UTC for Kolkata), deep-linking to the Library, and a `notification_logs` row with type `morning_digest`. Second user gets nothing. A user downgraded to free gets nothing. **Requires the 2026-11-23 manual migration** |
 | TC-NOTIF-06 | P1 | api | Morning Digest is Pro-only and persists | As Pro: toggle on in Settings → Save Reminders → leave and reopen Settings. As free: `PATCH /notifications/settings {"morning_digest": true}` | Pro: the toggle is still on after reopening, and `GET /users/me` has `morning_digest: true`. Free: the request gets 403 `FORBIDDEN`; in the app the switch opens the paywall instead |
+| TC-NOTIF-08 | P1 | e2e | Tapping a push routes and logs the open | Receive a daily reminder with the app (a) killed and (b) backgrounded; tap it. Repeat with a trial-expiry push | The app opens on the reminder's category tab (`oshi://library/<slug>`), or on Subscription for the trial push, both cold and warm. That push's `notification_logs` row is marked opened, and PostHog records `notification_opened` with the type. Relaunching later does **not** replay the old tap |
+| TC-NOTIF-09 | P1 | e2e | Per-category reminder (Pro) | As Pro: Settings → edit a category with unread saves → Own reminder time 2 min from now → save. Also set the daily reminder for the same minute. As free: try the switch; via API `PATCH /categories/:id {"reminder_override_time":"19:00:00+00"}` | At that minute, one push about that category plus a daily reminder featuring a **different** category (or none). The row shows ⏰ and the time. Free: the switch opens the paywall and the API returns 403. A downgraded user's leftover override sends nothing |
+| TC-NOTIF-10 | P0 | app | Onboarding reminder respects timezone | On a device set to a non-UTC zone (e.g. Asia/Kolkata), pick 7:00 PM in onboarding; check `GET /users/me` and Settings; wait for the reminder. Repeat with Skip | `reminder_time` is the UTC equivalent (13:30:00+00 for Kolkata). Settings shows 7:00 PM, and the push arrives at 7 PM local. Skip stores 7 PM local, not 7 PM UTC. **Regression guard for FIX-20261124-06** |
 | TC-NOTIF-07 | P1 | app | Reminders screen | Open `oshi://settings/reminders` | A real "Daily Reminder" screen with a back button (no placeholder), showing the same values as Settings → Daily Reminder; a change saved on either is reflected on the other after reopening |
 
 ## 11 · Subscription & paywall
@@ -194,12 +199,18 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 
 ---
 
+## 17 · Analytics
+
+| ID | P | Type | Case | Steps | Expected |
+|----|---|------|------|-------|----------|
+| TC-ANL-01 | P2 | app | Plan events fire | With PostHog's live events view open: sign in, switch a tab, search, change sort and view, swipe, multi-select + bulk action, undo, save a URL (new and duplicate), change a category, add a note, hit the save limit | Each action emits its plan event once (e.g. `library_search_performed` once per settled query, not per keystroke). `save_duplicate_detected` carries `platform` and **no URL**. Nothing fires for a user who opted out in Settings |
+
 ## Coverage map
 
 | Area | Cases | Journeys |
 |------|-------|----------|
 | Gate 0 | TC-GATE-01 | all |
-| Auth 1 | 7 | J1, J12, J13 |
+| Auth 1 | 9 | J1, J12, J13 |
 | Saves 2 | 7 | J2 |
 | AI 3 | 5 | J2, J10 |
 | Library 4 | 9 | J5 |
@@ -208,15 +219,16 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | Categories 7 | 9 | J8 |
 | Import 8 | 3 | J7 |
 | Offline 9 | 4 | J3 |
-| Notifications 10 | 7 | J4 |
+| Notifications 10 | 10 | J4 |
 | Subscription 11 | 8 | J9 |
 | Engagement 12 | 2 | J11 |
 | Security 13 | 5 | — |
 | Deep links 14 | 1 | J4, J12 |
 | Appearance 15 | 2 | all |
 | Data retention 16 | 2 | J12 |
+| Analytics 17 | 1 | — |
 
-**Total: 83 cases (P0: 26 · P1: 46 · P2: 11 — plus the gate).**
+**Total: 89 cases (P0: 28 · P1: 49 · P2: 12 — plus the gate).**
 
 > Paywall wiring landed 2026-11-23 (FIX-20261123-01); TC-SUB-01 is no longer known-blocked.
 >
@@ -228,6 +240,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial catalogue: 64 cases across 15 areas. |
 | 1.1 | 2026-09-18 18:30 | +4 regression cases for the wave-2 fixes (AUTH-07, LIB-09, SORT-05, CAT-05); AUTH-01/03, ACT-03, NOTIF-03 sharpened; paywall known-blocked note. |
+| 1.5 | 2026-11-24 04:48 | +AUTH-08/09 (account restore, plan survives refresh), +NOTIF-08/09/10 (tap routing, per-category reminders, onboarding timezone), new §17 Analytics (ANL-01). |
 | 1.4 | 2026-11-23 07:05 | +CAT-06…09 (shared picker, Settings↔Library sync, reorder persistence, counts), new §15 Appearance (UI-01/02) and §16 Data retention (PURGE-01/02). |
 | 1.3 | 2026-11-23 04:23 | +NOTIF-05/06/07 (Morning Digest delivery & persistence, Reminders screen), +SUB-08 (day-5 upsell banner). |
 | 1.2 | 2026-11-23 04:11 | Paywall wiring: SUB-01 rewritten per trigger; +SUB-05/06/07; CAT-01 and IMP-03 (now P1) rewritten for the custom-category rule and stop-at-limit import; known-blocked note replaced by a dev-data prerequisite. |

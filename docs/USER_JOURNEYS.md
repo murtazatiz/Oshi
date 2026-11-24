@@ -50,6 +50,8 @@ flowchart LR
 1. Cron matches HH:MM + weekday; skips if zero unread or app opened <2h ago.
 2. Notification names the category with most unread; tapping deep-links `oshi://library/:categorySlug` straight to that tab; the open is logged.
 
+**Tapping the push** opens the category tab even when the app was closed, and the open is logged (TC-NOTIF-08). **Variant — own category times (Pro):** a category can have its own reminder time, which sends a separate push for that category; the daily reminder then features the others (TC-NOTIF-09).
+
 **Variant — Morning Digest (Pro):** at 08:00 in the user's timezone, Pro users who opted in get a summary of yesterday's saves, which opens the Library (TC-NOTIF-05). Reminder settings are reachable inline in Settings or directly via `oshi://settings/reminders` (TC-NOTIF-07).
 
 **Outcome:** user lands exactly on the pile they meant to get back to.
@@ -111,12 +113,13 @@ Streak counter increments on qualifying daily activity, hard-resets on a missed 
 
 ## J12 — Account lifecycle
 
-**Trigger:** Settings. **Covers:** TC-AUTH-03…06.
+**Trigger:** Settings. **Covers:** TC-AUTH-03…06, TC-AUTH-08.
 
 - Profile edit + avatar upload (Supabase Storage signed URL).
 - Sign out (clears SecureStore session + App Group JWT).
 - Forgot password → email → `oshi://auth/reset?token=…` deep link → new password.
 - Delete account → soft delete (30-day window) → signed out.
+- Sign back in within 30 days (any method) → "Welcome back" prompt → **Restore my account** (back to normal) or **Keep it deleted and sign out**. After 30 days the nightly purge removes everything (TC-AUTH-08, TC-PURGE-02).
 
 ## J13 — Returning user, app cold start
 
@@ -151,3 +154,4 @@ Session restored from SecureStore → JWT synced to App Group → RevenueCat/Pos
 | 1.0 | 2026-09-18 17:33 | Initial journey catalogue (J1–J13). |
 | 1.1 | 2026-11-23 04:11 | J9 rewritten for the wired paywall. |
 | 1.2 | 2026-11-23 04:23 | J4 Morning Digest variant; J9 upsell-banner trigger. |
+| 1.3 | 2026-11-24 04:48 | J4 tap routing + per-category variant; J12 account restore. |

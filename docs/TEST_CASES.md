@@ -231,7 +231,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | Data retention 16 | 2 | J12 |
 | Analytics 17 | 2 | — |
 
-**Total: 92 cases (P0: 28 · P1: 51 · P2: 13 — plus the gate).**
+**Total: 92 cases (P0: 33 · P1: 51 · P2: 8 — plus the P0 gate, so 34 P0 rows in all).**
 
 > Paywall wiring landed 2026-11-23 (FIX-20261123-01); TC-SUB-01 is no longer known-blocked.
 >
@@ -243,6 +243,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial catalogue: 64 cases across 15 areas. |
 | 1.1 | 2026-09-18 18:30 | +4 regression cases for the wave-2 fixes (AUTH-07, LIB-09, SORT-05, CAT-05); AUTH-01/03, ACT-03, NOTIF-03 sharpened; paywall known-blocked note. |
+| 1.7 | 2026-11-24 16:47 | Corrected the priority split, which had been mis-tallied since v1.0 (per-section counts were right). The P0 run can now be driven by `scripts/first-deploy-wizard.sh`, which records to `docs/test-runs/`. |
 | 1.6 | 2026-11-24 16:23 | SUB-08 rewritten (trial upsell), +SUB-09 (downgrade banner), +SUB-10 (downgraded save block), +ANL-02 (server events + opt-out). |
 | 1.5 | 2026-11-24 04:48 | +AUTH-08/09 (account restore, plan survives refresh), +NOTIF-08/09/10 (tap routing, per-category reminders, onboarding timezone), new §17 Analytics (ANL-01). |
 | 1.4 | 2026-11-23 07:05 | +CAT-06…09 (shared picker, Settings↔Library sync, reorder persistence, counts), new §15 Appearance (UI-01/02) and §16 Data retention (PURGE-01/02). |

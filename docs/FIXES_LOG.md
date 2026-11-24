@@ -75,6 +75,17 @@ Entry template:
 
 ---
 
+## 2026-11-24, cutover tooling (16:30–16:50 UTC)
+
+### FIX-20261124-11 — The post-merge steps had no runbook; P0 count mis-tallied
+- **Area:** repo / docs · **Severity:** hygiene
+- **Fix:** `scripts/first-deploy-wizard.sh`, generated from the repo's `wizard` skill template with the library left unchanged. It walks the cutover steps that need human access, in dependency order: both migrations (`psql` on `DIRECT_URL` with confirmation, else the SQL editor with the SQL copied to the clipboard), column verification, the optional category backfill (confirmation required), the backend's `POSTHOG_API_KEY` (offers to reuse the app's key and sets it on Railway via CLI if available), the deploy with Node-version and `/health` checks, and a guided P0 run that writes `docs/test-runs/RUN_<date>.md`. Verified statically: `bash -n` passes; all 34 P0 rows parse into ID/case/steps/expected; scoped env-file reads tested; bash 3.2-safe for macOS. Not run end-to-end, since it needs your accounts and input.
+- **Also:** TEST_CASES' priority summary had been mis-tallied since v1.0. Actual: P0 33 · P1 51 · P2 8, plus the P0 gate. I'd been describing "28 P0 cases"; there are 34 P0 rows including the gate.
+- **Not done:** recording the three product readings (ADR-0019 custom-category limit, ADR-0023 banner audiences, FIX-20261124-09 downgraded save block) as confirmed and rewording the PRD to match. That needs an explicit product sign-off, not an inference from "go ahead".
+- **Commit:** see `git log` for 2026-11-24 16:50.
+
+---
+
 ## 2026-11-24, wave 6 (15:40–16:25 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
 
 ### FIX-20261124-08 — The day-5 upsell and the PRD's downgrade banner targeted the same users; the downgrade banner didn't exist
@@ -385,5 +396,6 @@ The remaining items from the 2026-09-18 architecture review's backlog that didn'
 | 1.2 | 2026-11-23 04:11 | Paywall wiring (FIX-20261123-01) and custom-category limit (FIX-20261123-02). |
 | 1.3 | 2026-11-23 04:23 | Reminders screen, Morning Digest persistence + sender, day-5 upsell banner (FIX-20261123-03…05). |
 | 1.4 | 2026-11-23 07:05 | Backlog wave: fonts, dark-mode navigation, category pickers, Settings categories, purge (FIX-20261123-06…10); expo-share-intent open item. |
+| 1.7 | 2026-11-24 16:47 | Cutover wizard + P0 count correction (FIX-20261124-11). |
 | 1.6 | 2026-11-24 16:23 | Wave 6: banner split + downgrade banner, downgraded save block, server-side analytics with stored opt-out (FIX-20261124-08…10). |
 | 1.5 | 2026-11-24 04:48 | FIX-20261124-01…07: share-intent/SDK fix (+ expo-linking correction), account restore, plan-on-refresh, per-category reminders, notification taps, onboarding UTC, analytics. |

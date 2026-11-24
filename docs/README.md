@@ -26,6 +26,18 @@ Related documents at the repo root (these predate `docs/` and remain authoritati
 - `context.md` — project-wide context for developers and AI assistants. Its §7 "Key Architectural Decisions" predates the ADR log; **from 2026-09-18 onward `docs/adr/` is the canonical decision record.**
 - `CLAUDE.md` — AI-assistant working guidance (commands, conventions, gotchas).
 
+## First deploy of PR #3
+
+`scripts/first-deploy-wizard.sh` walks the steps only a person with Supabase,
+Railway and a device can do, in order: both manual migrations (run via `psql`
+on `DIRECT_URL` when available, otherwise the Supabase SQL editor), a check that
+both columns exist, the optional dev-data category backfill, the backend's
+`POSTHOG_API_KEY`, the deploy plus Node-version and health checks, and every P0
+case from TEST_CASES.md one at a time, recording results to
+`docs/test-runs/RUN_<date>.md`. Run it from your machine:
+`bash scripts/first-deploy-wizard.sh`. It's a one-off cutover script; delete it
+once the first deploy is done.
+
 ## Conventions
 
 **Dating & timing.** Every document carries a `Created` and `Last updated` timestamp in UTC (`YYYY-MM-DD HH:MM UTC`). Log-style documents (FIXES_LOG, ADRs) date every entry individually.

@@ -53,6 +53,8 @@ const PatchMeSchema = z.object({
    * modal (PRD §3.4.2) — prevents the modal from appearing again.
    */
   notification_reask_shown: z.boolean().optional(),
+  /** Mirrors the app's analytics opt-out so server-side events respect it */
+  analytics_opt_out: z.boolean().optional(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,6 +242,7 @@ router.patch(
         notification_permission,
         last_opened_at,
         notification_reask_shown,
+        analytics_opt_out,
       } = parsed.data;
 
       // Build update payload — only include provided fields
@@ -249,6 +252,7 @@ router.patch(
         notificationPermission?: string;
         lastOpenedAt?: Date;
         notificationReaskShown?: boolean;
+        analyticsOptOut?: boolean;
       } = {};
 
       if (display_name !== undefined) data.displayName = display_name;
@@ -259,6 +263,7 @@ router.patch(
         data.lastOpenedAt = new Date(last_opened_at);
       if (notification_reask_shown !== undefined)
         data.notificationReaskShown = notification_reask_shown;
+      if (analytics_opt_out !== undefined) data.analyticsOptOut = analytics_opt_out;
 
       const updated = await prisma.user.update({
         where: { id: req.userId },

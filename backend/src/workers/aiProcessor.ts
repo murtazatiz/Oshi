@@ -5,6 +5,7 @@ import { fetchContentMetadata } from '../services/metadataService';
 import { classifyContent, resolveCategoryId } from '../services/aiService';
 import { invalidateSmartSortCache } from '../services/smartSortService';
 import { Sentry } from '../services/sentry';
+import { trackServerEvent } from '../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI Processing Worker — PRD §1.2 (Architecture) critical path
@@ -69,6 +70,7 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
         creatorName: metadata.channelOrAuthor || null,
       },
     });
+    void trackServerEvent(save.userId, 'save_ai_failed', { platform: metadata.platform });
     return;
   }
 
@@ -104,6 +106,13 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
   // ("Other") — clear the smart-sort ranking cache for both, same contract as
   // the routes (PRD §3.2.2: any mutation of presence/status/category invalidates).
   await invalidateSmartSortCache(save.userId, save.categoryId, categoryId);
+
+  void trackServerEvent(save.userId, 'save_ai_processed', {
+    platform: metadata.platform,
+    content_type: classification.content_type,
+    category: classification.category,
+    confidence: classification.confidence_score,
+  });
 
   // Step 12: Supabase Realtime fires automatically when the row is updated —
   // no additional code needed here. The mobile app is subscribed to

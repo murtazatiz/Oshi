@@ -28,6 +28,7 @@ import {
   startNightlyPurge,
   stopSchedulers,
 } from './cron/scheduler';
+import { shutdownAnalytics } from './services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CORS — implemented exactly as specified in PRD §5.5
@@ -146,6 +147,9 @@ async function shutdown(signal: string): Promise<void> {
   // Stop BullMQ workers — lets in-flight jobs finish
   await stopAiWorkers(aiWorkers);
   await stopNotificationWorker(notifWorker);
+
+  // Flush queued server-side analytics events
+  await shutdownAnalytics().catch(() => {});
 
   server.close(() => {
     console.info('[Oshi API] HTTP server closed');

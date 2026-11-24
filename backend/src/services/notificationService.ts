@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { prisma } from '../lib/prisma';
+import { trackServerEvent } from './analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Expo Push API — PRD §5.1 ("Push Notifications: Expo Push Notifications")
@@ -254,7 +255,9 @@ async function sendLoggedPush(
     await prisma.notificationLog.delete({ where: { id: logId } }).catch(() => {
       // Already gone — nothing to clean up
     });
+    return;
   }
+  void trackServerEvent(log.userId, 'notification_sent', { notification_type: log.notificationType });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

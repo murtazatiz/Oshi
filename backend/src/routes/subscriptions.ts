@@ -5,6 +5,7 @@ import { Errors } from '../middleware/errorHandler';
 import { prisma } from '../lib/prisma';
 import { scheduleNotification } from '../queue';
 import { Sentry } from '../services/sentry';
+import { trackServerEvent } from '../services/analytics';
 
 const router = Router();
 
@@ -208,6 +209,7 @@ router.post(
       switch (eventType) {
         case 'INITIAL_PURCHASE':
           await setSubscriptionStatus(userId, 'pro', event);
+          void trackServerEvent(userId, 'subscription_purchased', { from_trial: false, ...{ environment: event.environment ?? null } });
           break;
 
         case 'RENEWAL':
@@ -216,22 +218,27 @@ router.post(
 
         case 'CANCELLATION':
           await setSubscriptionStatus(userId, 'cancelled', event);
+          void trackServerEvent(userId, 'subscription_cancelled', { during_trial: false, ...{ environment: event.environment ?? null } });
           break;
 
         case 'EXPIRATION':
           await setSubscriptionStatus(userId, 'free');
+          void trackServerEvent(userId, 'subscription_expired', { environment: event.environment ?? null });
           break;
 
         case 'TRIAL_STARTED':
           await handleTrialStarted(userId, event);
+          void trackServerEvent(userId, 'trial_started', { environment: event.environment ?? null });
           break;
 
         case 'TRIAL_CONVERTED':
           await setSubscriptionStatus(userId, 'pro', event);
+          void trackServerEvent(userId, 'subscription_purchased', { from_trial: true, ...{ environment: event.environment ?? null } });
           break;
 
         case 'TRIAL_CANCELLED':
           await setSubscriptionStatus(userId, 'cancelled', event);
+          void trackServerEvent(userId, 'subscription_cancelled', { during_trial: true, ...{ environment: event.environment ?? null } });
           break;
 
         case 'PRODUCT_CHANGE':

@@ -26,6 +26,7 @@
     "multer": "^1.4.4",
     "node-cron": "^3.x",
     "openai": "^4.x",
+    "posthog-node": "^5.74.0",
     "zod": "^3.x"
   },
   "devDependencies": {
@@ -39,6 +40,6 @@
     "typescript": "^5.x"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^20.20.0 || >=22.22.0"
   }
 }

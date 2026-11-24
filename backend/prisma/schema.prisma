@@ -76,6 +76,11 @@ model User {
   /// Added 2026-11-23: requires prisma/manual-migrations/20261123_add_morning_digest.sql
   morningDigest Boolean @default(false) @map("morning_digest")
 
+  /// Analytics opt-out, synced from the app's Settings toggle so server-side
+  /// events respect it too. Added 2026-11-24: requires
+  /// prisma/manual-migrations/20261124_add_analytics_opt_out.sql
+  analyticsOptOut Boolean @default(false) @map("analytics_opt_out")
+
   timezone String @default("UTC")
 
   /// Duolingo-style hard-reset streak (PRD §3.4.4)

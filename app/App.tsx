@@ -20,9 +20,11 @@ import { useSubscriptionStore } from './src/store/subscriptionStore';
 import { initialisePurchases } from './src/services/purchases';
 import {
   initAnalytics,
+  isOptedOut,
   setSuperProperties,
   resetAnalyticsUser,
 } from './src/services/analytics';
+import { apiClient } from './src/services/apiClient';
 import MilestoneCelebration from './src/components/MilestoneCelebration';
 import { AccountRestorePrompt } from './src/components/AccountRestorePrompt';
 import ShareExtensionHandler from './share-extension/ShareExtension';
@@ -71,6 +73,18 @@ function AuthInitialiser(): null {
   useEffect(() => {
     void initialise();
   }, [initialise]);
+
+  // Server-side analytics respect the opt-out only if the server knows about
+  // it; re-send a device opt-out on each sign-in (covers opt-outs made before
+  // the setting synced, or a failed sync).
+  useEffect(() => {
+    if (!session) return;
+    void isOptedOut().then((optedOut) => {
+      if (optedOut) {
+        void apiClient.patch('/users/me', { analytics_opt_out: true }).catch(() => {});
+      }
+    });
+  }, [session?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync JWT to App Group whenever the session changes so the iOS Share
   // Extension always has a valid token (PRD §3.1.3)

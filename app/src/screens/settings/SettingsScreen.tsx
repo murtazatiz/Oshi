@@ -532,6 +532,11 @@ export default function SettingsScreen(): React.JSX.Element {
                     await optOutAnalytics();
                     setAnalyticsOptedOut(true);
                   }
+                  // Mirror to the server so its own events (subscriptions, AI
+                  // processing, pushes) respect the choice too
+                  void apiClient.patch('/users/me', { analytics_opt_out: !val }).catch(() => {
+                    // Retried by the sign-in sync in App.tsx
+                  });
                 }}
                 trackColor={{ true: colors.accent }}
               />

@@ -316,9 +316,8 @@ const analytics = {
   purchaseRestored: (was_pro: boolean) =>
     track('purchase_restored', { was_pro }),
 
-  trialStarted: () => track('trial_started'),
-  trialExpired: () => track('trial_expired'),
-  subscriptionCancelled: () => track('subscription_cancelled'),
+  // trial_started / subscription_* are tracked server-side from the
+  // RevenueCat webhook (backend/src/services/analytics.ts), per the plan.
 
   downgradeBannerViewed: () => track('downgrade_banner_viewed'),
   downgradeBannerDismissed: () => track('downgrade_banner_dismissed'),

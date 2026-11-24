@@ -154,7 +154,9 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | TC-SUB-01 | P0 | app | Paywall triggers | As a free user: (a) 21st save via the Save URL modal; (b) 4th custom category in Settings; (c) Settings → Upgrade to Pro; (d) toggle Morning Digest; (e) trial banner → Upgrade Now (as a trial user on expiry day) | Paywall opens every time with the matching headline: (a) "You've used all 20 saves this month" — the Save URL modal also shows the backend's limit message underneath; (b) "You've reached 3 custom categories" — the new-category sheet closes so it can't hide the paywall; (c, d) "Upgrade to Oshi Pro"; (e) "Your Pro trial is ending". PostHog `paywall_viewed` carries the matching `trigger`. **Regression guard for FIX-20261123-01** |
 | TC-SUB-05 | P0 | app | Share-sheet limit | As a free user at 20/20, share a link into Oshi from another app | Share card shows *"Monthly save limit reached — upgrade to keep saving"* (not "Queued — will save when back online"); the URL is **not** put in the offline queue; when the card auto-dismisses, the paywall is open beneath it |
 | TC-SUB-06 | P1 | app | Background flush never pops the paywall | Free user at 20/20 with saves already in the offline queue → background and foreground the app twice | The queue flush hits 403 silently (`skipPaywall`): **no** paywall appears, the items stay queued, and they go through after an upgrade or the 1st-of-month reset |
-| TC-SUB-08 | P1 | app | Day-5 upsell banner | A free-plan account ≥ 5 days old (trial over) opens the Library; tap ✕; reopen the app; then (or with a fresh dismissal) tap **See Pro** | The banner *"You're on the free plan — get unlimited saves with Oshi Pro"* shows. ✕ hides it and it stays hidden across app restarts for 7 days. See Pro opens the paywall headed *"Get more out of Oshi"* (`paywall_viewed` trigger `upsell_banner`). Never shown to trial/Pro users or alongside the trial-expiry banner |
+| TC-SUB-08 | P1 | app | Day-5 trial upsell banner | A **trial** account ≥ 5 days old opens the Library; tap ✕; reopen the app; then (with a fresh dismissal) tap **See Pro** | *"Enjoying Oshi Pro? Keep it after your trial"* shows. ✕ hides it for 7 days, across restarts. See Pro opens the paywall headed *"Keep Pro after your trial"* (`paywall_viewed` trigger `upsell_banner`). Not shown to accounts < 5 days old, to free or Pro users, or alongside the trial-expiry banner (ADR-0023) |
+| TC-SUB-09 | P1 | app | Free-plan (downgrade) banner | A free-plan account (trial ended, or subscription expired) opens the Library; tap ✕; switch tabs and back; force-quit and reopen; tap **Upgrade** | *"You're on the free plan — some features are limited. Upgrade to Pro."* shows. ✕ hides it for the rest of the session (it stays hidden across tab switches) and it returns after relaunch. Upgrade opens the paywall headed *"Get everything back with Pro"*. `downgrade_banner_viewed` fires once per session and `downgrade_banner_dismissed` on ✕. Never shown to trial or Pro users |
+| TC-SUB-10 | P1 | e2e | Downgraded user over the category limit can't save | A user with 5 custom categories (created on Pro/trial) drops to free; try to save a URL; delete 2 custom categories; save again | First save: 403 `CATEGORY_LIMIT_REACHED`, the paywall opens, and the message says "…allows 3 custom categories and you have 5…". All existing saves and categories are still visible. After deleting down to 3, the save succeeds. Pro/trial users are never blocked by this (PRD §3.7.4) |
 | TC-SUB-07 | P1 | app | Subscription settings screen | Open `oshi://settings/subscription` (or tap a trial-expiry push) as free, trial, pro, and cancelled users | Real screen (no placeholder): shows the current plan; free/trial/cancelled get an upgrade button → paywall; pro/cancelled get **Manage subscription** → the App Store / Play Store subscriptions page; Restore purchases works for all |
 | TC-SUB-02 | P0 | api | Webhook auth | POST `/subscriptions/webhook` without / with wrong / with correct `REVENUECAT_WEBHOOK_AUTH_HEADER` | Unauthorized rejected; correct secret updates `subscription_status` per event |
 | TC-SUB-03 | P1 | e2e | Upgrade unlocks | Complete a (sandbox) purchase | Status → pro; saves beyond 20 succeed; new AI jobs route to the priority queue (observe faster completion) |
@@ -203,6 +205,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 
 | ID | P | Type | Case | Steps | Expected |
 |----|---|------|------|-------|----------|
+| TC-ANL-02 | P2 | e2e | Server events and opt-out | With `POSTHOG_API_KEY` set: send a RevenueCat sandbox INITIAL_PURCHASE and CANCELLATION webhook; let a save finish AI processing; receive a reminder push. Then turn Analytics off in Settings and repeat | Before opt-out: `subscription_purchased` (from_trial false), `subscription_cancelled`, `save_ai_processed`, `notification_sent` appear on that user with `source: server` and `environment: SANDBOX`. After opt-out: `users.analytics_opt_out` is true and none of them are sent. Without `POSTHOG_API_KEY` the backend runs normally and sends nothing |
 | TC-ANL-01 | P2 | app | Plan events fire | With PostHog's live events view open: sign in, switch a tab, search, change sort and view, swipe, multi-select + bulk action, undo, save a URL (new and duplicate), change a category, add a note, hit the save limit | Each action emits its plan event once (e.g. `library_search_performed` once per settled query, not per keystroke). `save_duplicate_detected` carries `platform` and **no URL**. Nothing fires for a user who opted out in Settings |
 
 ## Coverage map
@@ -220,15 +223,15 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 | Import 8 | 3 | J7 |
 | Offline 9 | 4 | J3 |
 | Notifications 10 | 10 | J4 |
-| Subscription 11 | 8 | J9 |
+| Subscription 11 | 10 | J9 |
 | Engagement 12 | 2 | J11 |
 | Security 13 | 5 | — |
 | Deep links 14 | 1 | J4, J12 |
 | Appearance 15 | 2 | all |
 | Data retention 16 | 2 | J12 |
-| Analytics 17 | 1 | — |
+| Analytics 17 | 2 | — |
 
-**Total: 89 cases (P0: 28 · P1: 49 · P2: 12 — plus the gate).**
+**Total: 92 cases (P0: 28 · P1: 51 · P2: 13 — plus the gate).**
 
 > Paywall wiring landed 2026-11-23 (FIX-20261123-01); TC-SUB-01 is no longer known-blocked.
 >
@@ -240,6 +243,7 @@ Status legend for cases themselves: *Active* unless marked **Retired** (IDs are 
 |-------------|------------|--------|
 | 1.0 | 2026-09-18 17:33 | Initial catalogue: 64 cases across 15 areas. |
 | 1.1 | 2026-09-18 18:30 | +4 regression cases for the wave-2 fixes (AUTH-07, LIB-09, SORT-05, CAT-05); AUTH-01/03, ACT-03, NOTIF-03 sharpened; paywall known-blocked note. |
+| 1.6 | 2026-11-24 16:23 | SUB-08 rewritten (trial upsell), +SUB-09 (downgrade banner), +SUB-10 (downgraded save block), +ANL-02 (server events + opt-out). |
 | 1.5 | 2026-11-24 04:48 | +AUTH-08/09 (account restore, plan survives refresh), +NOTIF-08/09/10 (tap routing, per-category reminders, onboarding timezone), new §17 Analytics (ANL-01). |
 | 1.4 | 2026-11-23 07:05 | +CAT-06…09 (shared picker, Settings↔Library sync, reorder persistence, counts), new §15 Appearance (UI-01/02) and §16 Data retention (PURGE-01/02). |
 | 1.3 | 2026-11-23 04:23 | +NOTIF-05/06/07 (Morning Digest delivery & persistence, Reminders screen), +SUB-08 (day-5 upsell banner). |

@@ -30,5 +30,7 @@
 | [0020](0020-manual-sql-migrations-until-baseline.md) | Schema changes ship as hand-run SQL until a Prisma migrations baseline exists | Accepted | 2026-11-23 |
 | [0021](0021-purge-deletes-dependents-explicitly.md) | The soft-delete purge deletes dependent rows explicitly and removes the auth account | Accepted | 2026-11-23 |
 | [0022](0022-push-carries-log-id-taps-route-via-linking.md) | Pushes carry their log id; taps route through the linking config | Accepted | 2026-11-24 |
+| [0023](0023-upsell-is-trial-day-5-downgrade-banner-is-free.md) | Day-5 upsell targets trial users; the downgrade banner targets the free plan | Accepted | 2026-11-24 |
+| [0024](0024-server-analytics-with-stored-opt-out.md) | Server-side analytics, with the opt-out stored on the user | Accepted | 2026-11-24 |
 
-**Doc version:** 1.1 · **Created:** 2026-09-18 17:34 UTC · **Last updated:** 2026-11-23 04:11 UTC (ADR-0018–0022)
+**Doc version:** 1.1 · **Created:** 2026-09-18 17:34 UTC · **Last updated:** 2026-11-23 04:11 UTC (ADR-0018–0024)

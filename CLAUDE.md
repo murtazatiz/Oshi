@@ -99,7 +99,8 @@ src/
   middleware/         auth.ts (requireAuth), errorHandler.ts, rateLimiter.ts
   routes/             auth, saves, categories, engagement, users, notifications, subscriptions
   services/           aiService, metadataService, youtubeService, smartSortService,
-                      notificationService, sentry
+                      notificationService, purgeService, analytics (posthog-node,
+                      respects users.analytics_opt_out — ADR-0024), sentry
   queue/index.ts      BullMQ queues + enqueue helpers + Redis connection
   workers/            aiProcessor, deadLinkChecker, notificationScheduler
   cron/scheduler.ts   node-cron: daily reminders (every min), monthly counter reset
@@ -251,7 +252,9 @@ colours/sizes. Light/dark is provided via `ThemeContext`.
 ## Key business rules (don't break these)
 - Free tier: 20 saves/month (enforced atomically in `POST /saves`), 3 custom
   categories: rows with `is_system_default = false`; the 11 seeded defaults
-  never count (ADR-0019). Pro/trial bypass both.
+  never count (ADR-0019). A free user holding more than 3 (after a downgrade)
+  can't add saves until back within it (PRD §3.7.4). Limits live in
+  `backend/src/constants/limits.ts`. Pro/trial bypass all of these.
 - New signups get **11 default categories** + `trial_started_at = NOW()`.
 - Save status: `unread` → `done` (sets `done_at`) / `skipped` (sets `skipped_at`);
   reverting to `unread` clears both.
@@ -268,7 +271,8 @@ needed vars from code.
 **Backend** (`backend/.env`): `DATABASE_URL` (with `?pgbouncer=true`),
 `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `REDIS_URL`,
 `OPENAI_API_KEY`, `YOUTUBE_DATA_API_KEY`, `REVENUECAT_WEBHOOK_AUTH_HEADER`,
-`SENTRY_DSN`, `PORT`, `APP_ENV`/`NODE_ENV`.
+`SENTRY_DSN`, `PORT`, `APP_ENV`/`NODE_ENV`, `POSTHOG_API_KEY` (optional —
+server-side analytics are a no-op without it) and `POSTHOG_HOST` (optional).
 
 **App** (`app/.env`, must be `EXPO_PUBLIC_*` to reach the client):
 `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`,

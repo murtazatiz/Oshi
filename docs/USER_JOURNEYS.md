@@ -89,7 +89,7 @@ Create (free tier: max 3 custom → paywall), rename, re-emoji, delete (**saves 
 
 ## J9 — Hitting a limit → upgrading
 
-**Trigger:** 21st save in a month, 4th custom category (the 11 defaults don't count), the Settings upgrade row, a Pro-only toggle, the trial-expiry banner, or the day-5 upsell banner on the Library (free plan, TC-SUB-08). **Covers:** TC-SUB-01…07, TC-CAT-01, TC-IMP-03.
+**Trigger:** 21st save in a month, 4th custom category (the 11 defaults don't count), the Settings upgrade row, a Pro-only toggle, the trial-expiry banner, the day-5 upsell banner (trial users, TC-SUB-08), or the free-plan banner (after a downgrade, TC-SUB-09). A downgraded user holding more than 3 custom categories hits the paywall on their next save until they're back within the limit (TC-SUB-10). **Covers:** TC-SUB-01…07, TC-CAT-01, TC-IMP-03.
 
 1. Backend rejects with a typed 403 → `apiClient` opens the Paywall with a trigger-specific headline ("You've used all 20 saves this month"). The surface the user was on reacts too: Save URL shows the limit message, Import stops and reports how many weren't imported, the share sheet says the limit was reached (and doesn't queue).
 2. User picks monthly/annual → RevenueCat purchase sheet → on success the paywall closes itself.
@@ -155,3 +155,4 @@ Session restored from SecureStore → JWT synced to App Group → RevenueCat/Pos
 | 1.1 | 2026-11-23 04:11 | J9 rewritten for the wired paywall. |
 | 1.2 | 2026-11-23 04:23 | J4 Morning Digest variant; J9 upsell-banner trigger. |
 | 1.3 | 2026-11-24 04:48 | J4 tap routing + per-category variant; J12 account restore. |
+| 1.4 | 2026-11-24 16:23 | J9 banner audiences (ADR-0023) and the downgraded save block. |

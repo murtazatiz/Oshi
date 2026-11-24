@@ -75,6 +75,33 @@ Entry template:
 
 ---
 
+## 2026-11-24, wave 6 (15:40–16:25 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
+
+### FIX-20261124-08 — The day-5 upsell and the PRD's downgrade banner targeted the same users; the downgrade banner didn't exist
+- **Area:** backend + app · **Severity:** missing feature / spec reconciliation
+- **Root cause:** FIX-20261123-05 showed the day-5 upsell to free users ≥ 5 days old. Every signup starts a 7-day trial, so that's every user whose trial ended, which is also exactly the audience of PRD §3.7.4's downgrade banner (never built).
+- **Fix (ADR-0023):** `upsell_banner_due` now targets **trial** users from day 5, with new copy and headline. New `downgrade_banner_due` (free plan) shows the PRD's copy, "You're on the free plan — some features are limited. Upgrade to Pro.", dismissible once per session, with its own paywall trigger and headline. `downgrade_banner_viewed` fires once per session and `_dismissed` on dismiss.
+- **Verified by:** both tsc · TC-SUB-08 (rewritten), TC-SUB-09.
+- **Commit:** `b725cc2`.
+
+### FIX-20261124-09 — Downgraded users with more than 3 custom categories could keep saving (PRD §3.7.4)
+- **Area:** backend + app · **Severity:** business rule not enforced
+- **Rule:** "New saves are blocked once the user's save count exceeds 20 in the current month OR they have more than 3 active categories." Only the monthly half was enforced.
+- **Fix:** `POST /saves` returns 403 `CATEGORY_LIMIT_REACHED` (which opens the paywall) to a free user holding more than 3 custom categories, with a message giving their count and the way out (delete some, or upgrade). Nothing is deleted, and the defaults don't count (ADR-0019). Free-plan limits moved to `backend/src/constants/limits.ts`. Import and share-sheet copy now says "free-plan limit reached".
+- **Flag for product:** this blocks *saving*, not just creating categories. That's what §3.7.4 says, but confirm it's the intended experience.
+- **Verified by:** both tsc · TC-SUB-10.
+- **Commit:** `91506f5`.
+
+### FIX-20261124-10 — No server-side analytics; opt-out was device-only
+- **Area:** backend + app · **Severity:** missing instrumentation
+- **Fix (ADR-0024):** `backend/src/services/analytics.ts` (posthog-node ^5.74.0; no-op without `POSTHOG_API_KEY`, optional `POSTHOG_HOST`). It tracks `trial_started`, `subscription_purchased` (from_trial), `subscription_cancelled` (during_trial), `subscription_expired` (all tagged with the RevenueCat environment), `save_ai_processed`/`_failed`, and `notification_sent`, and flushes on shutdown. Each event checks the new `users.analytics_opt_out`, which the Settings toggle sets via `PATCH /users/me` and the app re-sends on sign-in. The app's three now-server-owned helpers were removed.
+- **⚠ Deploy order:** run `backend/prisma/manual-migrations/20261124_add_analytics_opt_out.sql` (after the 20261123 one) **before** deploying this backend. Set `POSTHOG_API_KEY` on Railway to turn the events on.
+- **⚠ Runtime:** current posthog-node needs Node ^20.20.0 or >=22.22.0, and backend `engines` now declares that range (was `>=20.0.0`). Check that Railway's Node version satisfies it.
+- **Verified by:** both tsc · TC-ANL-02.
+- **Commit:** `f4764cc`.
+
+---
+
 ## 2026-11-24 (session 04:10–04:50 UTC, branch `claude/claude-md-mm3k18orohhzfkc4-Y2yiI`)
 
 ### FIX-20261124-01 — expo-share-intent required SDK 55; expo-linking peer restored
@@ -358,4 +385,5 @@ The remaining items from the 2026-09-18 architecture review's backlog that didn'
 | 1.2 | 2026-11-23 04:11 | Paywall wiring (FIX-20261123-01) and custom-category limit (FIX-20261123-02). |
 | 1.3 | 2026-11-23 04:23 | Reminders screen, Morning Digest persistence + sender, day-5 upsell banner (FIX-20261123-03…05). |
 | 1.4 | 2026-11-23 07:05 | Backlog wave: fonts, dark-mode navigation, category pickers, Settings categories, purge (FIX-20261123-06…10); expo-share-intent open item. |
+| 1.6 | 2026-11-24 16:23 | Wave 6: banner split + downgrade banner, downgraded save block, server-side analytics with stored opt-out (FIX-20261124-08…10). |
 | 1.5 | 2026-11-24 04:48 | FIX-20261124-01…07: share-intent/SDK fix (+ expo-linking correction), account restore, plan-on-refresh, per-category reminders, notification taps, onboarding UTC, analytics. |

@@ -5,6 +5,7 @@ import {
   sendMorningDigest,
   getTopUnreadCategory,
   UTC_DAY_NAMES,
+  type ReminderScope,
 } from '../services/notificationService';
 import { Sentry } from '../services/sentry';
 import { purgeDeletedSaves, purgeDeletedUsers } from '../services/purgeService';
@@ -38,6 +39,7 @@ async function getUsersToRemind(
     id: string;
     notification_token: string;
     last_opened_at: Date | null;
+    subscription_status: string;
   }>
 > {
   console.info(
@@ -50,10 +52,11 @@ async function getUsersToRemind(
       id: string;
       notification_token: string;
       last_opened_at: Date | null;
+      subscription_status: string;
     }>
   >(
     `
-    SELECT id, notification_token, last_opened_at
+    SELECT id, notification_token, last_opened_at, subscription_status
     FROM   users
     WHERE  notification_permission = 'granted'
       AND  notification_token IS NOT NULL
@@ -76,6 +79,44 @@ async function getUsersToRemind(
 }
 
 /**
+ * Pro per-category reminders (PRD §3.7.2) due this minute: categories whose
+ * reminder_override_time matches, for Pro/trial users with notifications on,
+ * on one of their reminder days. Overrides left behind by a downgrade are
+ * ignored (the plan filter), not deleted, so they return on re-upgrade.
+ */
+async function getCategoryRemindersDue(
+  currentHour: number,
+  currentMinute: number,
+  currentDay: string,
+): Promise<
+  Array<{
+    category_id: string;
+    user_id: string;
+    notification_token: string;
+    last_opened_at: Date | null;
+  }>
+> {
+  return prisma.$queryRawUnsafe(
+    `
+    SELECT c.id AS category_id, u.id AS user_id, u.notification_token, u.last_opened_at
+    FROM   categories c
+    JOIN   users u ON u.id = c.user_id
+    WHERE  c.reminder_override_time IS NOT NULL
+      AND  SPLIT_PART(c.reminder_override_time::text, ':', 1)::int = $1
+      AND  SPLIT_PART(c.reminder_override_time::text, ':', 2)::int = $2
+      AND  u.subscription_status IN ('pro', 'trial')
+      AND  u.notification_permission = 'granted'
+      AND  u.notification_token IS NOT NULL
+      AND  u.deleted_at IS NULL
+      AND  u.reminder_days @> $3::jsonb
+    `,
+    currentHour,
+    currentMinute,
+    JSON.stringify([currentDay]),
+  );
+}
+
+/**
  * Finds the category with the most unread saves for a user, fetches the
  * most recently saved item title in that category, then sends the push.
  *
@@ -85,9 +126,10 @@ async function getUsersToRemind(
 async function processUserReminder(
   userId: string,
   token: string,
+  scope: ReminderScope = {},
 ): Promise<void> {
   // ── Category with most unread saves (shared with the in-app route) ────────
-  const top = await getTopUnreadCategory(userId);
+  const top = await getTopUnreadCategory(userId, scope);
 
   // No unread saves at all — skip silently
   if (!top) return;
@@ -179,7 +221,35 @@ export function startDailyReminderScheduler(): void {
           )} UTC (day: ${currentDay})`,
         );
 
-        const usersToRemind = await getUsersToRemind(currentHour, currentMinute, currentDay);
+        const [dailyDue, categoryDue] = await Promise.all([
+          getUsersToRemind(currentHour, currentMinute, currentDay),
+          getCategoryRemindersDue(currentHour, currentMinute, currentDay),
+        ]);
+
+        // One job per push. Pro users' daily reminder skips categories that
+        // have their own time; each per-category reminder covers just that
+        // category. Both go through the same skip rules below.
+        const usersToRemind: Array<{
+          id: string;
+          notification_token: string;
+          last_opened_at: Date | null;
+          scope: ReminderScope;
+        }> = [
+          ...dailyDue.map((u) => ({
+            id: u.id,
+            notification_token: u.notification_token,
+            last_opened_at: u.last_opened_at,
+            scope: {
+              excludeOverridden: u.subscription_status === 'pro' || u.subscription_status === 'trial',
+            },
+          })),
+          ...categoryDue.map((c) => ({
+            id: c.user_id,
+            notification_token: c.notification_token,
+            last_opened_at: c.last_opened_at,
+            scope: { onlyCategoryId: c.category_id },
+          })),
+        ];
 
         if (usersToRemind.length === 0) {
           console.info('[reminder-cron] No users to remind for this minute.');
@@ -217,7 +287,7 @@ export function startDailyReminderScheduler(): void {
                   JSON.stringify({ userId: user.id }),
                 );
 
-                await processUserReminder(user.id, user.notification_token);
+                await processUserReminder(user.id, user.notification_token, user.scope);
               } catch (err) {
                 console.error(
                   `[reminder-cron] Error processing user ${user.id}:`,

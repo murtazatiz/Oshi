@@ -26,8 +26,12 @@ const PostCategorySchema = z.object({
 const PatchCategorySchema = z.object({
   name: z.string().min(1).max(50).optional(),
   emoji: z.string().min(1).max(10).optional(),
-  // TIMETZ stored as string — format validated by DB CHECK constraint
-  reminder_override_time: z.string().nullable().optional(),
+  /** Pro per-category reminder (PRD §3.7.2), UTC "HH:MM:SS+00"; null clears it */
+  reminder_override_time: z
+    .string()
+    .regex(/^\d{2}:\d{2}:\d{2}[+-]\d{2}(:\d{2})?$/, 'reminder_override_time must be like "19:00:00+00"')
+    .nullable()
+    .optional(),
   sort_order: z.number().int().min(0).optional(),
 });
 
@@ -227,6 +231,19 @@ router.patch(
       if (!existing) {
         next(Errors.notFound('Category'));
         return;
+      }
+
+      // Setting a per-category reminder is Pro-only; clearing one is always allowed
+      if (typeof reminder_override_time === 'string') {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { subscriptionStatus: true },
+        });
+        const isPro = user?.subscriptionStatus === 'pro' || user?.subscriptionStatus === 'trial';
+        if (!isPro) {
+          next(Errors.forbidden('Per-category reminder times are an Oshi Pro feature.'));
+          return;
+        }
       }
 
       const data: Prisma.CategoryUpdateInput = {};

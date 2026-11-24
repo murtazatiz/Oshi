@@ -35,6 +35,8 @@ export interface CategoryData {
   total_count: number;
   /** true for the 11 seeded defaults; only custom categories count toward the free limit */
   is_system_default?: boolean;
+  /** Pro per-category reminder time, UTC "HH:MM:SS+00"; absent when unset */
+  reminder_override_time?: string;
 }
 
 export interface UndoEntry {
@@ -174,7 +176,10 @@ interface SavesActions {
    * can show its own message (and detect the free-tier limit on create).
    */
   createCategory: (name: string, emoji: string) => Promise<CategoryData>;
-  updateCategory: (id: string, changes: { name: string; emoji: string }) => Promise<void>;
+  updateCategory: (
+    id: string,
+    changes: { name: string; emoji: string; reminderOverrideTime?: string | null },
+  ) => Promise<void>;
   deleteCategory: (id: string) => Promise<void>;
   /** Swap a category with its neighbour; optimistic, rolled back on failure. */
   moveCategory: (index: number, direction: 'up' | 'down') => Promise<void>;
@@ -307,11 +312,21 @@ export const useSavesStore = create<SavesStore>((set, get) => {
     return res.data;
   },
 
-  async updateCategory(id, { name, emoji }): Promise<void> {
-    await apiClient.patch(`/categories/${id}`, { name, emoji });
+  async updateCategory(id, { name, emoji, reminderOverrideTime }): Promise<void> {
+    await apiClient.patch(`/categories/${id}`, {
+      name,
+      emoji,
+      ...(reminderOverrideTime !== undefined ? { reminder_override_time: reminderOverrideTime } : {}),
+    });
+    const applyChanges = (c: CategoryData): CategoryData => {
+      const next: CategoryData = { ...c, name, emoji };
+      if (reminderOverrideTime === null) delete next.reminder_override_time;
+      else if (reminderOverrideTime !== undefined) next.reminder_override_time = reminderOverrideTime;
+      return next;
+    };
     // Cards show the category name, so rename it on the saves too
     set((s) => ({
-      categories: s.categories.map((c) => (c.id === id ? { ...c, name, emoji } : c)),
+      categories: s.categories.map((c) => (c.id === id ? applyChanges(c) : c)),
       ...withDerivedSaves(
         s,
         s.allSaves.map((sv) => (sv.category?.id === id ? { ...sv, category: { id, name } } : sv)),

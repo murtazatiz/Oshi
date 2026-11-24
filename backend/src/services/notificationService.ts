@@ -38,12 +38,31 @@ export interface TopUnreadCategory {
  * resolved ("Other"/📌 when the top saves are uncategorised).
  * Returns null when the user has no unread saves at all.
  */
+export interface ReminderScope {
+  /** Only consider this category (a Pro per-category reminder) */
+  onlyCategoryId?: string;
+  /**
+   * Skip categories that have their own reminder time (Pro users' daily
+   * reminder) so a category isn't nudged twice a day.
+   */
+  excludeOverridden?: boolean;
+}
+
 export async function getTopUnreadCategory(
   userId: string,
+  scope: ReminderScope = {},
 ): Promise<TopUnreadCategory | null> {
   const categoryUnreadCounts = await prisma.save.groupBy({
     by: ['categoryId'],
-    where: { userId, status: 'unread', deletedAt: null },
+    where: {
+      userId,
+      status: 'unread',
+      deletedAt: null,
+      ...(scope.onlyCategoryId !== undefined ? { categoryId: scope.onlyCategoryId } : {}),
+      ...(scope.excludeOverridden === true
+        ? { OR: [{ categoryId: null }, { category: { reminderOverrideTime: null } }] }
+        : {}),
+    },
     _count: { id: true },
     orderBy: { _count: { id: 'desc' } },
     take: 1,

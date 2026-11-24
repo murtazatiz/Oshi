@@ -37,6 +37,8 @@ import { useAuthStore } from '../../store/authStore';
 import { apiClient, getApiError, isLimitError } from '../../services/apiClient';
 import { openPaywall } from '../../services/paywall';
 import { ReminderSettings } from '../../components/ReminderSettings';
+import { TimePicker } from '../../components/TimePicker';
+import { formatUtcTimetzLocal, localToUtcTimetz, utcTimetzToLocal } from '../../utils/reminderTime';
 import { useSavesActions, useSavesStore, type CategoryData } from '../../store/savesStore';
 import analytics, { optOutAnalytics, optInAnalytics, isOptedOut } from '../../services/analytics';
 
@@ -66,15 +68,28 @@ function CategoryEditModal({
   cat: Category | null;
   visible: boolean;
   isPro: boolean;
-  onSave: (id: string, name: string, emoji: string) => void;
+  /** reminderOverrideTime: a time sets it, null clears it, undefined leaves it unchanged */
+  onSave: (id: string, name: string, emoji: string, reminderOverrideTime: string | null | undefined) => void;
   onClose: () => void;
 }): React.JSX.Element {
   const { colors, theme } = useTheme();
   const [name, setName] = useState(cat?.name ?? '');
   const [emoji, setEmoji] = useState(cat?.emoji ?? '📌');
+  // PRD §3.7.2 — Pro per-category reminder time, edited in local time
+  const [hasOwnReminder, setHasOwnReminder] = useState(false);
+  const [reminderHour, setReminderHour] = useState(19);
+  const [reminderMinute, setReminderMinute] = useState(0);
 
   useEffect(() => {
-    if (cat) { setName(cat.name); setEmoji(cat.emoji ?? '📌'); }
+    if (!cat) return;
+    setName(cat.name);
+    setEmoji(cat.emoji ?? '📌');
+    setHasOwnReminder(cat.reminder_override_time !== undefined);
+    if (cat.reminder_override_time) {
+      const local = utcTimetzToLocal(cat.reminder_override_time);
+      setReminderHour(local.hour);
+      setReminderMinute(local.minute);
+    }
   }, [cat]);
 
   if (!cat) return <></>;
@@ -105,8 +120,46 @@ function CategoryEditModal({
             />
           </View>
 
+          <View style={[ceStyles.reminderRow, { borderTopColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[ceStyles.reminderLabel, { color: colors.textPrimary }]}>Own reminder time</Text>
+              <Text style={[ceStyles.reminderSub, { color: colors.textMuted }]}>
+                Nudge me about this category separately · Pro
+              </Text>
+            </View>
+            <Switch
+              value={isPro && hasOwnReminder}
+              onValueChange={(on) => {
+                if (!isPro) {
+                  onClose();
+                  openPaywall('settings');
+                  return;
+                }
+                setHasOwnReminder(on);
+              }}
+              trackColor={{ true: colors.accent }}
+            />
+          </View>
+          {isPro && hasOwnReminder && (
+            <TimePicker
+              hour={reminderHour}
+              minute={reminderMinute}
+              onChangeHour={setReminderHour}
+              onChangeMinute={setReminderMinute}
+            />
+          )}
+
           <TouchableOpacity
-            onPress={() => { onSave(cat.id, name.trim(), emoji); onClose(); }}
+            onPress={() => {
+              // Free users leave the field out entirely: setting is Pro-only on
+              // the server, and a downgraded user's leftover override is kept
+              // (ignored until they re-upgrade) rather than cleared by a rename.
+              const override = isPro
+                ? hasOwnReminder ? localToUtcTimetz(reminderHour, reminderMinute) : null
+                : undefined;
+              onSave(cat.id, name.trim(), emoji, override);
+              onClose();
+            }}
             style={[ceStyles.saveBtn, { backgroundColor: colors.accent, borderRadius: theme.borderRadius.sm }]}
           >
             <Text style={ceStyles.saveBtnText}>Save Changes</Text>
@@ -128,7 +181,16 @@ const ceStyles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10, marginBottom: 20 },
   emojiInput: { fontSize: 22, width: 52, height: 48, textAlign: 'center', borderWidth: 1, borderRadius: 8 },
   nameInput: { flex: 1, fontSize: 16, height: 48, borderWidth: 1, paddingHorizontal: 12 },
-  saveBtn: { height: 50, alignItems: 'center', justifyContent: 'center' },
+  reminderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 16,
+    marginBottom: 12,
+  },
+  reminderLabel: { fontSize: 15, fontWeight: '500' },
+  reminderSub: { fontSize: 12 },
+  saveBtn: { height: 50, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   saveBtnText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
 });
 
@@ -263,12 +325,21 @@ export default function SettingsScreen(): React.JSX.Element {
     setCatEditVisible(true);
   }
 
-  async function saveCategoryEdit(id: string, name: string, emoji: string): Promise<void> {
+  async function saveCategoryEdit(
+    id: string,
+    name: string,
+    emoji: string,
+    reminderOverrideTime: string | null | undefined,
+  ): Promise<void> {
     try {
-      await updateCategory(id, { name, emoji });
+      await updateCategory(id, {
+        name,
+        emoji,
+        ...(reminderOverrideTime !== undefined ? { reminderOverrideTime } : {}),
+      });
       analytics.settingsCategoryRenamed();
-    } catch {
-      Alert.alert('Error', 'Could not update category.');
+    } catch (err) {
+      Alert.alert('Error', getApiError(err)?.message ?? 'Could not update category.');
     }
   }
 
@@ -375,7 +446,12 @@ export default function SettingsScreen(): React.JSX.Element {
           <Text style={catStyles.emoji}>{item.emoji ?? '📌'}</Text>
           <View style={catStyles.info}>
             <Text style={[catStyles.name, { color: colors.textPrimary }]}>{item.name}</Text>
-            <Text style={[catStyles.count, { color: colors.textMuted }]}>{item.total_count} saves</Text>
+            <Text style={[catStyles.count, { color: colors.textMuted }]}>
+              {item.total_count} saves
+              {isPro && item.reminder_override_time
+                ? `  ·  ⏰ ${formatUtcTimetzLocal(item.reminder_override_time)}`
+                : ''}
+            </Text>
           </View>
           {item.name !== 'Other' && (
             <TouchableOpacity
@@ -390,7 +466,7 @@ export default function SettingsScreen(): React.JSX.Element {
         </TouchableOpacity>
       );
     },
-    [colors, categories.length, handleDeleteCategory, moveCategory],
+    [colors, categories.length, handleDeleteCategory, moveCategory, isPro],
   );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -545,7 +621,7 @@ export default function SettingsScreen(): React.JSX.Element {
         cat={editingCat}
         visible={catEditVisible}
         isPro={isPro}
-        onSave={(id, name, emoji) => void saveCategoryEdit(id, name, emoji)}
+        onSave={(id, name, emoji, override) => void saveCategoryEdit(id, name, emoji, override)}
         onClose={() => setCatEditVisible(false)}
       />
 

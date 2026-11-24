@@ -17,6 +17,8 @@ import { useAuthStore } from '../store/authStore';
 import { apiClient } from '../services/apiClient';
 import { openPaywall } from '../services/paywall';
 import analytics from '../services/analytics';
+import { localToUtcTimetz, utcTimetzToLocal } from '../utils/reminderTime';
+import { TimePicker } from './TimePicker';
 
 type ReminderDay = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0=Sun
 const DAY_LABELS: string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -24,81 +26,6 @@ const DAY_LABELS: string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const REMINDER_DAY_API = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 const DEFAULT_DAYS: ReminderDay[] = [0, 1, 2, 3, 4, 5, 6];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sub-components
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Minimal time picker: scrolling HH / MM / AM-PM wheels on iOS-like experience
- *  using simple -/+ buttons (no native picker dependency). */
-function TimePicker({
-  hour,
-  minute,
-  onChangeHour,
-  onChangeMinute,
-}: {
-  hour: number;
-  minute: number;
-  onChangeHour: (h: number) => void;
-  onChangeMinute: (m: number) => void;
-}): React.JSX.Element {
-  const { colors, theme } = useTheme();
-  const isAM = hour < 12;
-  const h12 = hour % 12 === 0 ? 12 : hour % 12;
-
-  function toggleMeridiem(): void {
-    onChangeHour(isAM ? hour + 12 : hour - 12);
-  }
-
-  return (
-    <View style={timStyles.row}>
-      {/* Hour */}
-      <View style={timStyles.spinnerCol}>
-        <TouchableOpacity onPress={() => onChangeHour((hour + 1) % 24)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▲</Text>
-        </TouchableOpacity>
-        <Text style={[timStyles.digit, { color: colors.textPrimary }]}>
-          {String(h12).padStart(2, '0')}
-        </Text>
-        <TouchableOpacity onPress={() => onChangeHour((hour - 1 + 24) % 24)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▼</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={[timStyles.colon, { color: colors.textPrimary }]}>:</Text>
-      {/* Minute */}
-      <View style={timStyles.spinnerCol}>
-        <TouchableOpacity onPress={() => onChangeMinute((minute + 1) % 60)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▲</Text>
-        </TouchableOpacity>
-        <Text style={[timStyles.digit, { color: colors.textPrimary }]}>
-          {String(minute).padStart(2, '0')}
-        </Text>
-        <TouchableOpacity onPress={() => onChangeMinute((minute - 1 + 60) % 60)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▼</Text>
-        </TouchableOpacity>
-      </View>
-      {/* AM/PM toggle */}
-      <TouchableOpacity
-        onPress={toggleMeridiem}
-        style={[timStyles.meridiem, { backgroundColor: colors.border, borderRadius: theme.borderRadius.sm }]}
-      >
-        <Text style={[timStyles.meridiemText, { color: colors.textPrimary }]}>
-          {isAM ? 'AM' : 'PM'}
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-const timStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
-  spinnerCol: { alignItems: 'center', gap: 4 },
-  arrow: { padding: 4 },
-  arrowText: { fontSize: 14 },
-  digit: { fontSize: 32, fontWeight: '700', minWidth: 48, textAlign: 'center' },
-  colon: { fontSize: 28, fontWeight: '700', marginBottom: 4 },
-  meridiem: { paddingHorizontal: 12, paddingVertical: 8, marginLeft: 8 },
-  meridiemText: { fontSize: 16, fontWeight: '700' },
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ReminderSettings
@@ -136,12 +63,9 @@ export function ReminderSettings(): React.JSX.Element {
       }>('/users/me');
 
       if (userRes.data.reminder_time) {
-        const [hStr, mStr] = userRes.data.reminder_time.split(':');
-        const utcH = parseInt(hStr ?? '19', 10);
-        const utcM = parseInt(mStr ?? '0', 10);
-        const utcDate = new Date(Date.UTC(1970, 0, 1, utcH, utcM, 0, 0));
-        setReminderHour(utcDate.getHours());
-        setReminderMinute(utcDate.getMinutes());
+        const local = utcTimetzToLocal(userRes.data.reminder_time);
+        setReminderHour(local.hour);
+        setReminderMinute(local.minute);
       }
       if (Array.isArray(userRes.data.reminder_days)) {
         const days = userRes.data.reminder_days
@@ -207,20 +131,8 @@ export function ReminderSettings(): React.JSX.Element {
   async function saveReminders(): Promise<void> {
     setIsSavingReminder(true);
     try {
-      // Convert selected local time to UTC for storage (backend expects UTC)
-      const now = new Date();
-      const localDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        reminderHour,
-        reminderMinute,
-        0,
-        0,
-      );
-      const utcHours = localDate.getUTCHours();
-      const utcMinutes = localDate.getUTCMinutes();
-      const timeStr = `${String(utcHours).padStart(2, '0')}:${String(utcMinutes).padStart(2, '0')}:00+00`;
+      // Backend stores reminder times in UTC
+      const timeStr = localToUtcTimetz(reminderHour, reminderMinute);
 
       const dayStrings = reminderDays
         .map((d) => (typeof d === 'number' && d >= 0 && d <= 6 ? REMINDER_DAY_API[d] : typeof d === 'string' ? d : null))

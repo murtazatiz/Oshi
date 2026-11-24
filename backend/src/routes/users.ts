@@ -3,7 +3,8 @@ import multer from 'multer';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import { supabaseAdmin } from '../middleware/auth';
-import { Errors } from '../middleware/errorHandler';
+import { AppError, Errors } from '../middleware/errorHandler';
+import { purgeDate } from '../services/purgeService';
 import { prisma } from '../lib/prisma';
 
 const router = Router();
@@ -116,6 +117,7 @@ const userSelect = {
 const getMeSelect = {
   ...userSelect,
   createdAt: true,
+  deletedAt: true,
   notificationReaskShown: true,
   trialExpiryBannerDue: true,
 } as const;
@@ -192,6 +194,14 @@ router.get(
       const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
       if (user.subscriptionStatus === 'free' && user.createdAt < fiveDaysAgo) {
         response.upsell_banner_due = true;
+      }
+
+      // PRD §3.7.5 — a soft-deleted user signing back in within the window is
+      // offered a restore. Every sign-in path loads this endpoint, so it's the
+      // one place the app learns the account is pending deletion.
+      if (user.deletedAt !== null) {
+        response.account_deleted_at = user.deletedAt.toISOString();
+        response.purge_after = purgeDate(user.deletedAt).toISOString();
       }
 
       res.json(response);
@@ -336,6 +346,40 @@ router.post(
       });
 
       res.json({ avatar_url: avatarUrl });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /users/me/restore — undo account deletion within the window (PRD §3.7.5)
+//
+// Clears deleted_at so the nightly purge no longer targets the account.
+// Nothing was removed at deletion time, so the account comes back intact.
+// 404 when the account isn't pending deletion or the window has passed.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post(
+  '/me/restore',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { deletedAt: true },
+      });
+
+      if (!user || user.deletedAt === null || purgeDate(user.deletedAt) <= new Date()) {
+        next(new AppError('NOT_FOUND', 'There is no account deletion to undo.', 404));
+        return;
+      }
+
+      const restored = await prisma.user.update({
+        where: { id: req.userId },
+        data: { deletedAt: null },
+        select: userSelect,
+      });
+
+      res.json(formatUser(restored));
     } catch (err) {
       next(err);
     }

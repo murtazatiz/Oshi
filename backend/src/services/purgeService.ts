@@ -24,6 +24,14 @@ const SAVE_BATCH_SIZE = 500;
 /** Users purged per run — a backlog clears over successive nights. */
 const USER_BATCH_SIZE = 100;
 
+/**
+ * When a soft-deleted account becomes eligible for the purge. Also the end of
+ * the restore window (POST /users/me/restore), so both read one definition.
+ */
+export function purgeDate(deletedAt: Date): Date {
+  return new Date(deletedAt.getTime() + USER_RETENTION_DAYS * DAY_MS);
+}
+
 /** Must match AVATAR_BUCKET in routes/users.ts (avatars/[user_id]/profile.jpg). */
 const AVATAR_BUCKET = 'avatars';
 

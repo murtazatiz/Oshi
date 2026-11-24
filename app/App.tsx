@@ -24,6 +24,7 @@ import {
   resetAnalyticsUser,
 } from './src/services/analytics';
 import MilestoneCelebration from './src/components/MilestoneCelebration';
+import { AccountRestorePrompt } from './src/components/AccountRestorePrompt';
 import ShareExtensionHandler from './share-extension/ShareExtension';
 import { syncSessionToAppGroup } from './src/services/shareExtension';
 import ShareHandlerScreen from './src/screens/ShareHandlerScreen';
@@ -183,6 +184,8 @@ function AppRoot(): React.JSX.Element | null {
         <OfflineQueueBanner />
         {/* PRD §3.4.4 — streak milestone celebration overlay */}
         <MilestoneCelebration />
+        {/* PRD §3.7.5 — offer to undo a pending account deletion on sign-in */}
+        <AccountRestorePrompt />
       </ThemeProvider>
     </ShareIntentProvider>
   );

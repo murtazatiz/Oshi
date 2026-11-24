@@ -19,8 +19,17 @@ export interface AuthUser {
   itemsSavedThisMonth: number;
 }
 
+/** PRD §3.7.5 — the signed-in account is soft-deleted and can still be restored. */
+export interface PendingAccountRestore {
+  deletedAt: string;
+  /** After this the nightly purge removes the account for good */
+  purgeAfter: string;
+}
+
 interface AuthState {
   user: AuthUser | null;
+  /** Set when the account that just signed in is pending deletion */
+  pendingAccountRestore: PendingAccountRestore | null;
   session: Session | null;
   isLoading: boolean;
   isInitialised: boolean;
@@ -39,6 +48,10 @@ interface AuthActions {
   /** Google Sign In via Supabase OAuth — PRD §3.5.1 */
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  /** Undo a pending account deletion (POST /users/me/restore). Throws on failure. */
+  restoreAccount: () => Promise<void>;
+  /** Keep the account deleted: dismiss the restore prompt and sign out. */
+  declineAccountRestore: () => Promise<void>;
   /** Sends reset email via backend POST /auth/reset-password — PRD §3.5.2 */
   sendPasswordReset: (email: string) => Promise<void>;
   /** Updates password using token from deep link — PRD §3.5.2 */
@@ -60,6 +73,59 @@ function extractErrorMessage(err: unknown): string {
     return String((err as Record<string, unknown>).message);
   }
   return 'An unexpected error occurred.';
+}
+
+interface ProfileResult {
+  profile: Partial<AuthUser> | undefined;
+  pendingRestore: PendingAccountRestore | null;
+}
+
+/**
+ * Load the backend profile for the signed-in user. Every sign-in path (email,
+ * Apple, Google OAuth, session restore) goes through this, so a pending
+ * account deletion is detected wherever the user comes back in.
+ */
+async function fetchProfile(): Promise<ProfileResult> {
+  try {
+    const res = await apiClient.get<{
+      display_name: string;
+      avatar_url?: string;
+      subscription_status: AuthUser['subscriptionStatus'];
+      streak_count: number;
+      items_saved_this_month: number;
+      account_deleted_at?: string;
+      purge_after?: string;
+    }>('/users/me');
+    const d = res.data;
+    return {
+      profile: {
+        displayName: d.display_name,
+        avatarUrl: d.avatar_url,
+        subscriptionStatus: d.subscription_status,
+        streakCount: d.streak_count,
+        itemsSavedThisMonth: d.items_saved_this_month,
+      },
+      pendingRestore:
+        d.account_deleted_at && d.purge_after
+          ? { deletedAt: d.account_deleted_at, purgeAfter: d.purge_after }
+          : null,
+    };
+  } catch {
+    // Profile fetch failed — proceed with minimal user data from the JWT
+    return { profile: undefined, pendingRestore: null };
+  }
+}
+
+/**
+ * The user for a refreshed session: keep the profile already loaded for the
+ * same account. Rebuilding from the JWT alone reset subscriptionStatus to its
+ * 'trial' default on every hourly token refresh, so free users looked Pro.
+ */
+function userForSession(session: Session, current: AuthUser | null): AuthUser {
+  if (current && current.id === session.user.id) {
+    return { ...current, email: session.user.email ?? current.email };
+  }
+  return mapUser(session.user);
 }
 
 // Map Supabase user + backend profile into our AuthUser shape
@@ -91,6 +157,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   isInitialised: false,
   error: null,
   sessionExpiredMessage: null,
+  pendingAccountRestore: null,
 
   // ── Actions ──
 
@@ -107,29 +174,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       const session = data.session;
 
       if (session) {
-        // Fetch full profile from backend
-        let profile: Partial<AuthUser> | undefined;
-        try {
-          const res = await apiClient.get<{
-            id: string;
-            display_name: string;
-            avatar_url?: string;
-            subscription_status: AuthUser['subscriptionStatus'];
-            streak_count: number;
-            items_saved_this_month: number;
-          }>('/users/me');
-          profile = {
-            displayName: res.data.display_name,
-            avatarUrl: res.data.avatar_url,
-            subscriptionStatus: res.data.subscription_status,
-            streakCount: res.data.streak_count,
-            itemsSavedThisMonth: res.data.items_saved_this_month,
-          };
-        } catch {
-          // Profile fetch failed — proceed with minimal user data from JWT
-        }
-
-        set({ session, user: mapUser(session.user, profile) });
+        const { profile, pendingRestore } = await fetchProfile();
+        set({
+          session,
+          user: mapUser(session.user, profile),
+          pendingAccountRestore: pendingRestore,
+        });
       }
     } catch {
       // Could not restore session — user will see onboarding
@@ -146,8 +196,15 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
           // Preserve the expired message so LoginScreen can show it
           sessionExpiredMessage: get().sessionExpiredMessage,
         });
+      } else if (event === 'SIGNED_IN' && session && get().user?.id !== session.user.id) {
+        // A new account signed in through a path that didn't load the profile
+        // itself (Google OAuth arrives here after the browser redirect)
+        void fetchProfile().then(({ profile, pendingRestore }) => {
+          set({ session, user: mapUser(session.user, profile), pendingAccountRestore: pendingRestore });
+        });
       } else if (session) {
-        set({ session, user: mapUser(session.user) });
+        // Token refresh etc. — same account, keep its loaded profile
+        set({ session, user: userForSession(session, get().user) });
       }
     });
   },
@@ -207,28 +264,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       if (error) throw error;
       if (!data.session) throw new Error('Sign in failed — no session returned.');
 
-      // Fetch full profile
-      let profile: Partial<AuthUser> | undefined;
-      try {
-        const res = await apiClient.get<{
-          display_name: string;
-          avatar_url?: string;
-          subscription_status: AuthUser['subscriptionStatus'];
-          streak_count: number;
-          items_saved_this_month: number;
-        }>('/users/me');
-        profile = {
-          displayName: res.data.display_name,
-          avatarUrl: res.data.avatar_url,
-          subscriptionStatus: res.data.subscription_status,
-          streakCount: res.data.streak_count,
-          itemsSavedThisMonth: res.data.items_saved_this_month,
-        };
-      } catch {
-        // Proceed with JWT data on profile fetch failure
-      }
-
-      set({ session: data.session, user: mapUser(data.session.user, profile) });
+      const { profile, pendingRestore } = await fetchProfile();
+      set({
+        session: data.session,
+        user: mapUser(data.session.user, profile),
+        pendingAccountRestore: pendingRestore,
+      });
     } catch (err) {
       set({ error: extractErrorMessage(err) });
       throw err;
@@ -267,7 +308,12 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       if (error) throw error;
       if (!data.session) throw new Error('Apple Sign In — no session returned.');
 
-      set({ session: data.session, user: mapUser(data.session.user) });
+      const { profile, pendingRestore } = await fetchProfile();
+      set({
+        session: data.session,
+        user: mapUser(data.session.user, profile),
+        pendingAccountRestore: pendingRestore,
+      });
     } catch (err) {
       // User cancelled Apple Sign In — do not show an error
       const code = (err as Record<string, unknown>).code;
@@ -311,8 +357,18 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     try {
       await supabase.auth.signOut();
     } finally {
-      set({ user: null, session: null, isLoading: false, error: null });
+      set({ user: null, session: null, isLoading: false, error: null, pendingAccountRestore: null });
     }
+  },
+
+  async restoreAccount(): Promise<void> {
+    await apiClient.post('/users/me/restore');
+    set({ pendingAccountRestore: null });
+  },
+
+  async declineAccountRestore(): Promise<void> {
+    set({ pendingAccountRestore: null });
+    await get().signOut();
   },
 
   /**
@@ -364,7 +420,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
   _setSession(session): void {
     if (session) {
-      set({ session, user: mapUser(session.user) });
+      set({ session, user: userForSession(session, get().user) });
     } else {
       // 401 unrecoverable — signal the expired message for LoginScreen
       set({

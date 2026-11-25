@@ -1,6 +1,11 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { fetchYouTubeMetadata, type YouTubeMetadata } from './youtubeService';
+import { detectPlatform, type Platform } from './platform';
+
+// Platform detection lives in ./platform (shared with the POST /saves route);
+// re-exported here so existing importers keep working.
+export { detectPlatform, type Platform };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // URL Metadata Extraction Service
@@ -17,17 +22,6 @@ import { fetchYouTubeMetadata, type YouTubeMetadata } from './youtubeService';
 // ⚠️ Never attempt to scrape instagram.com, tiktok.com, or twitter.com
 //    server-side beyond Open Graph (PRD §3.1.2 — IP ban risk).
 // ─────────────────────────────────────────────────────────────────────────────
-
-export type Platform =
-  | 'instagram'
-  | 'youtube'
-  | 'tiktok'
-  | 'web'
-  | 'twitter'
-  | 'linkedin'
-  | 'facebook'
-  | 'spotify'
-  | 'other';
 
 export interface ContentMetadata {
   platform: Platform;
@@ -62,21 +56,6 @@ const BROWSER_LIKE_HEADERS: Record<string, string> = {
 
 const LINKEDIN_FALLBACK_THUMB = 'https://static.licdn.com/sc/h/al2o9zrvru7ynbxj2j6dabs4';
 const FACEBOOK_FALLBACK_THUMB = 'https://www.facebook.com/images/fb_icon_325x325.png';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Platform detection — specific platforms checked before generic "web" fallback
-// ─────────────────────────────────────────────────────────────────────────────
-export function detectPlatform(url: string): Platform {
-  const hostname = new URL(url).hostname.toLowerCase();
-  if (hostname.includes('instagram.com')) return 'instagram';
-  if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) return 'youtube';
-  if (hostname.includes('tiktok.com')) return 'tiktok';
-  if (hostname.includes('twitter.com') || hostname.includes('x.com')) return 'twitter';
-  if (hostname.includes('linkedin.com')) return 'linkedin';
-  if (hostname.includes('facebook.com') || hostname.includes('fb.com') || hostname.includes('fb.watch') || hostname.includes('fb.me')) return 'facebook';
-  if (hostname.includes('spotify.com')) return 'spotify';
-  return 'web';
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Open Graph tag extraction
@@ -309,27 +288,20 @@ async function fetchRestrictedPlatform(
 // ─────────────────────────────────────────────────────────────────────────────
 // LinkedIn / Facebook — OG with browser-like headers + platform fallback thumbnail
 // ─────────────────────────────────────────────────────────────────────────────
-async function fetchLinkedIn(url: string): Promise<ContentMetadata> {
+/**
+ * LinkedIn and Facebook block the plain bot User-Agent; both use the same
+ * browser-like OG fetch and differ only in platform tag + fallback thumbnail.
+ */
+async function fetchWithBrowserHeaders(
+  url: string,
+  platform: 'linkedin' | 'facebook',
+  fallbackThumb: string,
+): Promise<ContentMetadata> {
   const result = await fetchOpenGraph(url, { browserLikeHeaders: true });
   const ogImage = result?.og.image?.trim();
-  const thumbnailUrl = ogImage || LINKEDIN_FALLBACK_THUMB;
+  const thumbnailUrl = ogImage || fallbackThumb;
   return {
-    platform: 'linkedin',
-    title: result?.og.title ?? '',
-    description: result?.og.description ?? '',
-    thumbnailUrl: thumbnailUrl || undefined,
-    textSnippet: result ? extractBodyText(result.html, 500) : '',
-    channelOrAuthor: result?.og.siteName ?? '',
-    durationSeconds: 0,
-  };
-}
-
-async function fetchFacebook(url: string): Promise<ContentMetadata> {
-  const result = await fetchOpenGraph(url, { browserLikeHeaders: true });
-  const ogImage = result?.og.image?.trim();
-  const thumbnailUrl = ogImage || FACEBOOK_FALLBACK_THUMB;
-  return {
-    platform: 'facebook',
+    platform,
     title: result?.og.title ?? '',
     description: result?.og.description ?? '',
     thumbnailUrl: thumbnailUrl || undefined,
@@ -389,10 +361,10 @@ export async function fetchContentMetadata(
       return fetchSpotifyEmbed(url);
 
     case 'linkedin':
-      return fetchLinkedIn(url);
+      return fetchWithBrowserHeaders(url, 'linkedin', LINKEDIN_FALLBACK_THUMB);
 
     case 'facebook':
-      return fetchFacebook(url);
+      return fetchWithBrowserHeaders(url, 'facebook', FACEBOOK_FALLBACK_THUMB);
 
     case 'web':
     case 'other':

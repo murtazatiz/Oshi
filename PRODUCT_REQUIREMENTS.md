@@ -258,12 +258,12 @@ Search bar is always visible at the top of the Library. Searching is real-time (
 •	List of all categories in drag-to-reorder order (react-native-draggable-flatlist).
 •	Tap category row to edit: rename, change emoji, change reminder override (Pro).
 •	Swipe left on a category to delete. Confirmation: 'Delete [Category]? All saves in this category will move to Other.'
-•	'Add Category' button at bottom. Free: disabled if at 3 category limit, shows upgrade prompt. Pro: unlimited.
+•	'Add Category' button at bottom. Free: disabled at 3 custom categories (the 11 default categories don't count), shows upgrade prompt. Pro: unlimited. [Updated 2026-11-25 — ADR-0019]
 3.7.4 Subscription Downgrade Behaviour
 •	When RevenueCat webhook signals cancellation: set subscription_status = 'cancelled', subscription_expires_at = end of current billing period.
 •	At subscription_expires_at: set subscription_status = 'free'.
 •	All existing saves and categories are PRESERVED. User can view all content.
-•	New saves are blocked once the user's save count exceeds 20 in the current month OR they have more than 3 active categories. Show paywall on the blocked action.
+•	New saves are blocked once the user's save count exceeds 20 in the current month OR they have more than 3 custom categories (the 11 default categories don't count). Show paywall on the blocked action. [Updated 2026-11-25 — ADR-0019, FIX-20261124-09]
 •	A persistent soft banner on the Library: 'You're on the free plan — some features are limited. Upgrade to Pro.' Dismissible once per session.
 3.7.5 Account Deletion
 •	Accessible via Settings → Account → Delete Account.
@@ -540,7 +540,7 @@ shadow.card	0 2px 12px rgba(0,0,0,0.08)
 8. Monetisation
 8.1 Free Tier Limits
 •	20 saves per calendar month. Counter resets on the 1st of each month (cron job).
-•	3 active categories maximum.
+•	3 custom categories maximum, on top of the 11 default categories every account starts with. [Updated 2026-11-25 — ADR-0019]
 •	One global daily reminder time.
 •	Basic AI: category + summary only. No tags, no confidence score shown.
 •	7-day free Pro trial on account creation.
@@ -558,7 +558,7 @@ shadow.card	0 2px 12px rgba(0,0,0,0.08)
 •	21st save attempt in a month — show paywall mid-flow with context count.
 •	4th category creation attempt — show paywall.
 •	Tapping any Pro-only feature toggle in Settings — show paywall.
-•	Day 5 soft upsell banner on Library home screen for free users.
+•	Day 5 soft upsell banner on Library home screen for trial users (day 5 of the 7-day trial). Users on the free plan see the §3.7.4 free-plan banner instead. [Updated 2026-11-25 — ADR-0023]
 8.4 Subscription Downgrade
 Fully specified in Section 3.7.4. Summary: all data preserved, new saves blocked until under free limit, persistent soft banner shown.
 

@@ -251,8 +251,9 @@ const analytics = {
 
   saveShared: (save_id: string) => track('save_shared', { save_id }),
 
-  saveDuplicateDetected: (url: string) =>
-    track('save_duplicate_detected', { url }),
+  // Platform only — saved URLs can be private (analytics plan §1: no PII)
+  saveDuplicateDetected: (platform: string) =>
+    track('save_duplicate_detected', { platform }),
 
   saveLimitReached: (count: number) =>
     track('save_limit_reached', { count }),
@@ -315,9 +316,8 @@ const analytics = {
   purchaseRestored: (was_pro: boolean) =>
     track('purchase_restored', { was_pro }),
 
-  trialStarted: () => track('trial_started'),
-  trialExpired: () => track('trial_expired'),
-  subscriptionCancelled: () => track('subscription_cancelled'),
+  // trial_started / subscription_* are tracked server-side from the
+  // RevenueCat webhook (backend/src/services/analytics.ts), per the plan.
 
   downgradeBannerViewed: () => track('downgrade_banner_viewed'),
   downgradeBannerDismissed: () => track('downgrade_banner_dismissed'),

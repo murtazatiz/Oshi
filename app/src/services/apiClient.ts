@@ -1,5 +1,51 @@
 import axios, { type AxiosInstance, type InternalAxiosRequestConfig } from 'axios';
 import { supabase } from './supabase';
+import { LIMIT_TRIGGERS, openPaywall, type LimitErrorCode } from './paywall';
+import analytics from './analytics';
+
+/** PRD §8.1 — the count a SAVE_LIMIT_REACHED means the user has hit */
+const FREE_MONTHLY_SAVE_LIMIT = 20;
+
+declare module 'axios' {
+  interface AxiosRequestConfig {
+    /**
+     * Don't open the paywall when this request hits a free-tier limit.
+     * For background work the user didn't just initiate (offline-queue
+     * flushes), which would otherwise pop the paywall on every foreground.
+     */
+    skipPaywall?: boolean;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Error envelope — API contract §1: { error: { code, message, statusCode } }
+// ─────────────────────────────────────────────────────────────────────────────
+export interface ApiError {
+  code: string;
+  message: string;
+  statusCode: number;
+}
+
+/** The backend's error envelope from a failed request, or null for network/other errors. */
+export function getApiError(err: unknown): ApiError | null {
+  if (!axios.isAxiosError(err)) return null;
+  const body: unknown = err.response?.data;
+  if (typeof body !== 'object' || body === null || !('error' in body)) return null;
+  const envelope = (body as { error: unknown }).error;
+  if (typeof envelope !== 'object' || envelope === null) return null;
+  const { code, message, statusCode } = envelope as Record<string, unknown>;
+  if (typeof code !== 'string') return null;
+  return {
+    code,
+    message: typeof message === 'string' ? message : 'Something went wrong.',
+    statusCode: typeof statusCode === 'number' ? statusCode : err.response?.status ?? 0,
+  };
+}
+
+export function isLimitError(err: unknown): boolean {
+  const code = getApiError(err)?.code;
+  return code !== undefined && code in LIMIT_TRIGGERS;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Base URLs per environment — set via EAS build profiles in eas.json
@@ -59,6 +105,20 @@ apiClient.interceptors.response.use(
     const originalRequest = error.config as InternalAxiosRequestConfig & {
       _retried?: boolean;
     };
+
+    // PRD §8.3 — free-tier limits open the paywall from here, so no call
+    // site can forget to. The error still rejects so callers can stop work
+    // (e.g. halt a batch import) and show their own message.
+    const limitCode = getApiError(error)?.code;
+    if (
+      limitCode !== undefined &&
+      limitCode in LIMIT_TRIGGERS &&
+      originalRequest?.skipPaywall !== true
+    ) {
+      if (limitCode === 'SAVE_LIMIT_REACHED') analytics.saveLimitReached(FREE_MONTHLY_SAVE_LIMIT);
+      openPaywall(LIMIT_TRIGGERS[limitCode as LimitErrorCode]);
+      return Promise.reject(error);
+    }
 
     if (error.response?.status !== 401 || originalRequest._retried) {
       return Promise.reject(error);

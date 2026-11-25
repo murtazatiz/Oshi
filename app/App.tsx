@@ -8,6 +8,10 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
+import { useFonts } from 'expo-font';
+import { Inter_400Regular, Inter_600SemiBold } from '@expo-google-fonts/inter';
+import { Sora_700Bold } from '@expo-google-fonts/sora';
 
 import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 import AppNavigator from './src/navigation/AppNavigator';
@@ -16,10 +20,13 @@ import { useSubscriptionStore } from './src/store/subscriptionStore';
 import { initialisePurchases } from './src/services/purchases';
 import {
   initAnalytics,
+  isOptedOut,
   setSuperProperties,
   resetAnalyticsUser,
 } from './src/services/analytics';
+import { apiClient } from './src/services/apiClient';
 import MilestoneCelebration from './src/components/MilestoneCelebration';
+import { AccountRestorePrompt } from './src/components/AccountRestorePrompt';
 import ShareExtensionHandler from './share-extension/ShareExtension';
 import { syncSessionToAppGroup } from './src/services/shareExtension';
 import ShareHandlerScreen from './src/screens/ShareHandlerScreen';
@@ -32,6 +39,23 @@ import {
 
 // Initialise PostHog analytics (PRD §5.9) — async, non-blocking
 void initAnalytics();
+
+// Keep the native splash up until the theme's fonts are registered, so the
+// first frame never renders in a fallback face.
+void SplashScreen.preventAutoHideAsync().catch(() => {
+  // Already hidden (e.g. fast refresh) — nothing to do
+});
+
+/**
+ * Font faces registered under the exact family names theme/index.ts uses
+ * (PRD §7 typography). The theme named these families from the start, but
+ * nothing loaded them, so every screen silently fell back to the system font.
+ */
+const THEME_FONTS = {
+  'Sora-Bold': Sora_700Bold,
+  'Inter-SemiBold': Inter_600SemiBold,
+  'Inter-Regular': Inter_400Regular,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AuthInitialiser — restores session on mount, syncs JWT to App Group
@@ -49,6 +73,18 @@ function AuthInitialiser(): null {
   useEffect(() => {
     void initialise();
   }, [initialise]);
+
+  // Server-side analytics respect the opt-out only if the server knows about
+  // it; re-send a device opt-out on each sign-in (covers opt-outs made before
+  // the setting synced, or a failed sync).
+  useEffect(() => {
+    if (!session) return;
+    void isOptedOut().then((optedOut) => {
+      if (optedOut) {
+        void apiClient.patch('/users/me', { analytics_opt_out: true }).catch(() => {});
+      }
+    });
+  }, [session?.user.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync JWT to App Group whenever the session changes so the iOS Share
   // Extension always has a valid token (PRD §3.1.3)
@@ -137,7 +173,17 @@ function OfflineQueueBanner(): React.JSX.Element | null {
 // App root
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AppRoot(): React.JSX.Element {
+function AppRoot(): React.JSX.Element | null {
+  const [fontsLoaded, fontError] = useFonts(THEME_FONTS);
+  const isReady = fontsLoaded || fontError !== null;
+
+  useEffect(() => {
+    // On a font error, render anyway with system fonts rather than hang on the splash
+    if (isReady) void SplashScreen.hideAsync().catch(() => {});
+  }, [isReady]);
+
+  if (!isReady) return null;
+
   return (
     <ShareIntentProvider>
       <ThemeProvider>
@@ -152,6 +198,8 @@ function AppRoot(): React.JSX.Element {
         <OfflineQueueBanner />
         {/* PRD §3.4.4 — streak milestone celebration overlay */}
         <MilestoneCelebration />
+        {/* PRD §3.7.5 — offer to undo a pending account deletion on sign-in */}
+        <AccountRestorePrompt />
       </ThemeProvider>
     </ShareIntentProvider>
   );

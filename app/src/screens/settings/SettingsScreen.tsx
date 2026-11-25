@@ -2,7 +2,7 @@
  * SettingsScreen — PRD §3.7.2–3.7.5
  *
  * Sections:
- *   §3.7.2 — Reminder Settings (time picker, day chips, morning digest toggle)
+ *   §3.7.2 — Reminder Settings (components/ReminderSettings, shared with RemindersScreen)
  *   §3.7.3 — Category Management (drag-to-reorder, rename, emoji, delete, add)
  *   §3.7.4 — Subscription / plan info
  *   §3.7.5 — Account Deletion (two-step confirmation with "DELETE" type-in)
@@ -31,105 +31,28 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
 
 import { useTheme, ThemeMode } from '../../theme/ThemeContext';
 import { useAuthStore } from '../../store/authStore';
-import { apiClient } from '../../services/apiClient';
+import { apiClient, getApiError, isLimitError } from '../../services/apiClient';
+import { openPaywall } from '../../services/paywall';
+import { ReminderSettings } from '../../components/ReminderSettings';
+import { TimePicker } from '../../components/TimePicker';
+import { formatUtcTimetzLocal, localToUtcTimetz, utcTimetzToLocal } from '../../utils/reminderTime';
+import { useSavesActions, useSavesStore, type CategoryData } from '../../store/savesStore';
 import analytics, { optOutAnalytics, optInAnalytics, isOptedOut } from '../../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Category {
-  id: string;
-  name: string;
-  emoji: string;
-  save_count: number;
-}
+/** Categories come from savesStore — the same list the Library tabs render. */
+type Category = CategoryData;
 
-type ReminderDay = 0 | 1 | 2 | 3 | 4 | 5 | 6; // 0=Sun
-const DAY_LABELS: string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-/** Maps ReminderDay (0=Sun) to backend reminder_days string values */
-const REMINDER_DAY_API = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
-const DEFAULT_DAYS: ReminderDay[] = [0, 1, 2, 3, 4, 5, 6];
+/** PRD §8.1 — free users may create up to 3 custom categories on top of the 11 defaults */
+const FREE_CUSTOM_CATEGORY_LIMIT = 3;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sub-components
-// ─────────────────────────────────────────────────────────────────────────────
 
-/** Minimal time picker: scrolling HH / MM / AM-PM wheels on iOS-like experience
- *  using simple -/+ buttons (no native picker dependency). */
-function TimePicker({
-  hour,
-  minute,
-  onChangeHour,
-  onChangeMinute,
-}: {
-  hour: number;
-  minute: number;
-  onChangeHour: (h: number) => void;
-  onChangeMinute: (m: number) => void;
-}): React.JSX.Element {
-  const { colors, theme } = useTheme();
-  const isAM = hour < 12;
-  const h12 = hour % 12 === 0 ? 12 : hour % 12;
-
-  function toggleMeridiem(): void {
-    onChangeHour(isAM ? hour + 12 : hour - 12);
-  }
-
-  return (
-    <View style={timStyles.row}>
-      {/* Hour */}
-      <View style={timStyles.spinnerCol}>
-        <TouchableOpacity onPress={() => onChangeHour((hour + 1) % 24)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▲</Text>
-        </TouchableOpacity>
-        <Text style={[timStyles.digit, { color: colors.textPrimary }]}>
-          {String(h12).padStart(2, '0')}
-        </Text>
-        <TouchableOpacity onPress={() => onChangeHour((hour - 1 + 24) % 24)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▼</Text>
-        </TouchableOpacity>
-      </View>
-      <Text style={[timStyles.colon, { color: colors.textPrimary }]}>:</Text>
-      {/* Minute */}
-      <View style={timStyles.spinnerCol}>
-        <TouchableOpacity onPress={() => onChangeMinute((minute + 1) % 60)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▲</Text>
-        </TouchableOpacity>
-        <Text style={[timStyles.digit, { color: colors.textPrimary }]}>
-          {String(minute).padStart(2, '0')}
-        </Text>
-        <TouchableOpacity onPress={() => onChangeMinute((minute - 1 + 60) % 60)} hitSlop={6} style={timStyles.arrow}>
-          <Text style={[timStyles.arrowText, { color: colors.accent }]}>▼</Text>
-        </TouchableOpacity>
-      </View>
-      {/* AM/PM toggle */}
-      <TouchableOpacity
-        onPress={toggleMeridiem}
-        style={[timStyles.meridiem, { backgroundColor: colors.border, borderRadius: theme.borderRadius.sm }]}
-      >
-        <Text style={[timStyles.meridiemText, { color: colors.textPrimary }]}>
-          {isAM ? 'AM' : 'PM'}
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-const timStyles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8 },
-  spinnerCol: { alignItems: 'center', gap: 4 },
-  arrow: { padding: 4 },
-  arrowText: { fontSize: 14 },
-  digit: { fontSize: 32, fontWeight: '700', minWidth: 48, textAlign: 'center' },
-  colon: { fontSize: 28, fontWeight: '700', marginBottom: 4 },
-  meridiem: { paddingHorizontal: 12, paddingVertical: 8, marginLeft: 8 },
-  meridiemText: { fontSize: 16, fontWeight: '700' },
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Category rename modal
@@ -145,15 +68,28 @@ function CategoryEditModal({
   cat: Category | null;
   visible: boolean;
   isPro: boolean;
-  onSave: (id: string, name: string, emoji: string) => void;
+  /** reminderOverrideTime: a time sets it, null clears it, undefined leaves it unchanged */
+  onSave: (id: string, name: string, emoji: string, reminderOverrideTime: string | null | undefined) => void;
   onClose: () => void;
 }): React.JSX.Element {
   const { colors, theme } = useTheme();
   const [name, setName] = useState(cat?.name ?? '');
   const [emoji, setEmoji] = useState(cat?.emoji ?? '📌');
+  // PRD §3.7.2 — Pro per-category reminder time, edited in local time
+  const [hasOwnReminder, setHasOwnReminder] = useState(false);
+  const [reminderHour, setReminderHour] = useState(19);
+  const [reminderMinute, setReminderMinute] = useState(0);
 
   useEffect(() => {
-    if (cat) { setName(cat.name); setEmoji(cat.emoji); }
+    if (!cat) return;
+    setName(cat.name);
+    setEmoji(cat.emoji ?? '📌');
+    setHasOwnReminder(cat.reminder_override_time !== undefined);
+    if (cat.reminder_override_time) {
+      const local = utcTimetzToLocal(cat.reminder_override_time);
+      setReminderHour(local.hour);
+      setReminderMinute(local.minute);
+    }
   }, [cat]);
 
   if (!cat) return <></>;
@@ -184,8 +120,46 @@ function CategoryEditModal({
             />
           </View>
 
+          <View style={[ceStyles.reminderRow, { borderTopColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[ceStyles.reminderLabel, { color: colors.textPrimary }]}>Own reminder time</Text>
+              <Text style={[ceStyles.reminderSub, { color: colors.textMuted }]}>
+                Nudge me about this category separately · Pro
+              </Text>
+            </View>
+            <Switch
+              value={isPro && hasOwnReminder}
+              onValueChange={(on) => {
+                if (!isPro) {
+                  onClose();
+                  openPaywall('settings');
+                  return;
+                }
+                setHasOwnReminder(on);
+              }}
+              trackColor={{ true: colors.accent }}
+            />
+          </View>
+          {isPro && hasOwnReminder && (
+            <TimePicker
+              hour={reminderHour}
+              minute={reminderMinute}
+              onChangeHour={setReminderHour}
+              onChangeMinute={setReminderMinute}
+            />
+          )}
+
           <TouchableOpacity
-            onPress={() => { onSave(cat.id, name.trim(), emoji); onClose(); }}
+            onPress={() => {
+              // Free users leave the field out entirely: setting is Pro-only on
+              // the server, and a downgraded user's leftover override is kept
+              // (ignored until they re-upgrade) rather than cleared by a rename.
+              const override = isPro
+                ? hasOwnReminder ? localToUtcTimetz(reminderHour, reminderMinute) : null
+                : undefined;
+              onSave(cat.id, name.trim(), emoji, override);
+              onClose();
+            }}
             style={[ceStyles.saveBtn, { backgroundColor: colors.accent, borderRadius: theme.borderRadius.sm }]}
           >
             <Text style={ceStyles.saveBtnText}>Save Changes</Text>
@@ -207,7 +181,16 @@ const ceStyles = StyleSheet.create({
   row: { flexDirection: 'row', gap: 10, marginBottom: 20 },
   emojiInput: { fontSize: 22, width: 52, height: 48, textAlign: 'center', borderWidth: 1, borderRadius: 8 },
   nameInput: { flex: 1, fontSize: 16, height: 48, borderWidth: 1, paddingHorizontal: 12 },
-  saveBtn: { height: 50, alignItems: 'center', justifyContent: 'center' },
+  reminderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 16,
+    marginBottom: 12,
+  },
+  reminderLabel: { fontSize: 15, fontWeight: '500' },
+  reminderSub: { fontSize: 12 },
+  saveBtn: { height: 50, alignItems: 'center', justifyContent: 'center', marginTop: 8 },
   saveBtnText: { color: '#FFFFFF', fontSize: 17, fontWeight: '700' },
 });
 
@@ -294,19 +277,18 @@ export default function SettingsScreen(): React.JSX.Element {
   const signOut = useAuthStore((s) => s.signOut);
   const isPro = user?.subscriptionStatus === 'pro' || user?.subscriptionStatus === 'trial';
 
-  // ── Reminder state ────────────────────────────────────────────────────────
-  const [reminderHour, setReminderHour] = useState(19);
-  const [reminderMinute, setReminderMinute] = useState(0);
-  const [reminderDays, setReminderDays] = useState<ReminderDay[]>(DEFAULT_DAYS);
-  const [morningDigest, setMorningDigest] = useState(false);
-  const [isSavingReminder, setIsSavingReminder] = useState(false);
-  const [notificationPermission, setNotificationPermission] = useState<
-    'undetermined' | 'granted' | 'denied' | null
-  >(null);
-  const [isEnablingNotifications, setIsEnablingNotifications] = useState(false);
 
   // ── Category state ────────────────────────────────────────────────────────
-  const [categories, setCategories] = useState<Category[]>([]);
+  const categories = useSavesStore((s) => s.categories);
+  const {
+    fetchCategories,
+    createCategory,
+    updateCategory,
+    deleteCategory,
+    moveCategory: moveCategoryInStore,
+  } = useSavesActions();
+  const customCategoryCount = categories.filter((c) => c.is_system_default !== true).length;
+  const isAtCategoryLimit = !isPro && customCategoryCount >= FREE_CUSTOM_CATEGORY_LIMIT;
   const [editingCat, setEditingCat] = useState<Category | null>(null);
   const [catEditVisible, setCatEditVisible] = useState(false);
   const [newCatVisible, setNewCatVisible] = useState(false);
@@ -331,134 +313,10 @@ export default function SettingsScreen(): React.JSX.Element {
   }, []);
 
   async function loadSettings(): Promise<void> {
-    try {
-      const [catRes, userRes] = await Promise.all([
-        apiClient.get<{ categories: Category[] }>('/categories'),
-        apiClient.get<{
-          reminder_time: string | null;
-          reminder_days: number[] | null;
-          morning_digest: boolean;
-        }>('/users/me'),
-      ]);
-      setCategories(catRes.data.categories);
-
-      if (userRes.data.reminder_time) {
-        const [hStr, mStr] = userRes.data.reminder_time.split(':');
-        const utcH = parseInt(hStr ?? '19', 10);
-        const utcM = parseInt(mStr ?? '0', 10);
-        const utcDate = new Date(Date.UTC(1970, 0, 1, utcH, utcM, 0, 0));
-        setReminderHour(utcDate.getHours());
-        setReminderMinute(utcDate.getMinutes());
-      }
-      if (userRes.data.reminder_days && Array.isArray(userRes.data.reminder_days)) {
-        const apiToDay = (s: string): ReminderDay | null => {
-          const i = REMINDER_DAY_API.indexOf(s as (typeof REMINDER_DAY_API)[number]);
-          return i >= 0 ? (i as ReminderDay) : null;
-        };
-        const raw = userRes.data.reminder_days as unknown as string[];
-        const days = raw
-          .map(apiToDay)
-          .filter((d): d is ReminderDay => d != null);
-        if (days.length > 0) setReminderDays(days.sort((a, b) => a - b));
-      }
-      setMorningDigest(userRes.data.morning_digest ?? false);
-    } catch {
-      // Non-fatal: UI shows default values
-    }
-
-    try {
-      const { status } = await Notifications.getPermissionsAsync();
-      setNotificationPermission(status);
-    } catch {
-      setNotificationPermission('undetermined');
-    }
+    await fetchCategories();
   }
 
-  // ── Enable notifications ────────────────────────────────────────────────────
 
-  async function handleEnableNotifications(): Promise<void> {
-    setIsEnablingNotifications(true);
-    try {
-      const { status } = await Notifications.requestPermissionsAsync();
-      setNotificationPermission(status);
-
-      if (status !== 'granted') {
-        Alert.alert(
-          'Notifications Disabled',
-          'Enable notifications in your device settings to get daily reminders.',
-        );
-        return;
-      }
-
-      const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
-
-      if (!projectId) {
-        Alert.alert('Error', 'Could not find project ID. Push notifications may not work.');
-        return;
-      }
-
-      const tokenData = await Notifications.getExpoPushTokenAsync({
-        projectId: String(projectId),
-      });
-
-      await apiClient.post('/notifications/token', {
-        expo_push_token: tokenData.data,
-      });
-
-      Alert.alert('Done', 'You\'ll receive daily reminders at your chosen time.');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Could not enable notifications.';
-      Alert.alert('Error', message);
-    } finally {
-      setIsEnablingNotifications(false);
-    }
-  }
-
-  // ── Save reminders ────────────────────────────────────────────────────────
-
-  async function saveReminders(): Promise<void> {
-    setIsSavingReminder(true);
-    try {
-      // Convert selected local time to UTC for storage (backend expects UTC)
-      const now = new Date();
-      const localDate = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        reminderHour,
-        reminderMinute,
-        0,
-        0,
-      );
-      const utcHours = localDate.getUTCHours();
-      const utcMinutes = localDate.getUTCMinutes();
-      const timeStr = `${String(utcHours).padStart(2, '0')}:${String(utcMinutes).padStart(2, '0')}:00+00`;
-      console.log('[settings] Sending reminder_time (UTC):', timeStr);
-
-      const dayStrings = reminderDays
-        .map((d) => (typeof d === 'number' && d >= 0 && d <= 6 ? REMINDER_DAY_API[d] : typeof d === 'string' ? d : null))
-        .filter((d) => typeof d === 'string') as string[];
-
-      await apiClient.patch('/notifications/settings', {
-        reminder_time: timeStr,
-        reminder_days: dayStrings,
-      });
-      analytics.settingsReminderSaved({ hour: reminderHour, days_count: reminderDays.length });
-      Alert.alert('Saved', 'Reminder settings updated.');
-    } catch {
-      Alert.alert('Error', 'Could not save reminder settings.');
-    } finally {
-      setIsSavingReminder(false);
-    }
-  }
-
-  // ── Toggle reminder day ───────────────────────────────────────────────────
-
-  function toggleDay(day: ReminderDay): void {
-    setReminderDays((prev) =>
-      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b),
-    );
-  }
 
   // ── Category actions ─────────────────────────────────────────────────────
 
@@ -467,13 +325,21 @@ export default function SettingsScreen(): React.JSX.Element {
     setCatEditVisible(true);
   }
 
-  async function saveCategoryEdit(id: string, name: string, emoji: string): Promise<void> {
+  async function saveCategoryEdit(
+    id: string,
+    name: string,
+    emoji: string,
+    reminderOverrideTime: string | null | undefined,
+  ): Promise<void> {
     try {
-      await apiClient.patch(`/categories/${id}`, { name, emoji });
-      setCategories((prev) => prev.map((c) => c.id === id ? { ...c, name, emoji } : c));
+      await updateCategory(id, {
+        name,
+        emoji,
+        ...(reminderOverrideTime !== undefined ? { reminderOverrideTime } : {}),
+      });
       analytics.settingsCategoryRenamed();
-    } catch {
-      Alert.alert('Error', 'Could not update category.');
+    } catch (err) {
+      Alert.alert('Error', getApiError(err)?.message ?? 'Could not update category.');
     }
   }
 
@@ -484,19 +350,17 @@ export default function SettingsScreen(): React.JSX.Element {
     }
     Alert.alert(
       `Delete ${cat.name}?`,
-      `All ${cat.save_count} saves in this category will move to Other.`,
+      `All ${cat.total_count} saves in this category will move to Other.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete', style: 'destructive',
           onPress: async () => {
             try {
-              await apiClient.delete(`/categories/${cat.id}`);
-              setCategories((prev) => prev.filter((c) => c.id !== cat.id));
+              await deleteCategory(cat.id);
               analytics.settingsCategoryDeleted();
             } catch (e: unknown) {
-              const msg = e instanceof Error ? e.message : 'Could not delete category.';
-              Alert.alert('Error', msg);
+              Alert.alert('Error', getApiError(e)?.message ?? 'Could not delete category.');
             }
           },
         },
@@ -505,40 +369,17 @@ export default function SettingsScreen(): React.JSX.Element {
   }
 
   async function handleAddCategory(): Promise<void> {
-    if (!isPro && categories.length >= 3) {
-      Alert.alert(
-        'Upgrade to Pro',
-        'Free users can have up to 3 categories. Upgrade to Pro for unlimited categories.',
-      );
+    if (isAtCategoryLimit) {
+      openPaywall('category_limit');
       return;
     }
-    console.log(
-      '[settings] handleAddCategory pressed — existing categories:',
-      categories.length,
-    );
     setNewCatName('');
     setNewCatVisible(true);
   }
 
   async function moveCategory(index: number, direction: 'up' | 'down'): Promise<void> {
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= categories.length) return;
-
-    const reordered = [...categories];
-    const temp = reordered[index]!;
-    reordered[index] = reordered[targetIndex]!;
-    reordered[targetIndex] = temp;
-
-    setCategories(reordered);
     analytics.settingsCategoryReordered();
-    try {
-      await apiClient.patch(`/categories/${temp.id}`, {
-        sort_order: targetIndex,
-      });
-    } catch {
-      // Non-fatal — revert optimistic update
-      setCategories(categories);
-    }
+    await moveCategoryInStore(index, direction);
   }
 
   // ── Account deletion ──────────────────────────────────────────────────────
@@ -602,10 +443,15 @@ export default function SettingsScreen(): React.JSX.Element {
             </TouchableOpacity>
           </View>
 
-          <Text style={catStyles.emoji}>{item.emoji}</Text>
+          <Text style={catStyles.emoji}>{item.emoji ?? '📌'}</Text>
           <View style={catStyles.info}>
             <Text style={[catStyles.name, { color: colors.textPrimary }]}>{item.name}</Text>
-            <Text style={[catStyles.count, { color: colors.textMuted }]}>{item.save_count} saves</Text>
+            <Text style={[catStyles.count, { color: colors.textMuted }]}>
+              {item.total_count} saves
+              {isPro && item.reminder_override_time
+                ? `  ·  ⏰ ${formatUtcTimetzLocal(item.reminder_override_time)}`
+                : ''}
+            </Text>
           </View>
           {item.name !== 'Other' && (
             <TouchableOpacity
@@ -620,7 +466,7 @@ export default function SettingsScreen(): React.JSX.Element {
         </TouchableOpacity>
       );
     },
-    [colors, categories.length, handleDeleteCategory, moveCategory],
+    [colors, categories.length, handleDeleteCategory, moveCategory, isPro],
   );
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -686,6 +532,11 @@ export default function SettingsScreen(): React.JSX.Element {
                     await optOutAnalytics();
                     setAnalyticsOptedOut(true);
                   }
+                  // Mirror to the server so its own events (subscriptions, AI
+                  // processing, pushes) respect the choice too
+                  void apiClient.patch('/users/me', { analytics_opt_out: !val }).catch(() => {
+                    // Retried by the sign-in sync in App.tsx
+                  });
                 }}
                 trackColor={{ true: colors.accent }}
               />
@@ -696,97 +547,7 @@ export default function SettingsScreen(): React.JSX.Element {
 
         {/* ── Reminders §3.7.2 ─────────────────────────────────────── */}
         <Section title="Daily Reminder">
-          <View style={[reminderStyles.container, { paddingHorizontal: 16, paddingTop: 16 }]}>
-            <View style={[reminderStyles.notifRow, { borderBottomColor: colors.border }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[reminderStyles.sublabel, { color: colors.textMuted }]}>
-                  Notifications
-                </Text>
-                <Text style={[reminderStyles.notifStatus, { color: colors.textPrimary }]}>
-                  {notificationPermission === null
-                    ? 'Checking…'
-                    : notificationPermission === 'granted'
-                      ? 'Enabled'
-                      : 'Off'}
-                </Text>
-              </View>
-              {notificationPermission !== 'granted' && (
-                <TouchableOpacity
-                  onPress={() => void handleEnableNotifications()}
-                  disabled={isEnablingNotifications}
-                  style={[
-                    reminderStyles.enableNotifBtn,
-                    {
-                      backgroundColor: colors.accent,
-                      borderRadius: theme.borderRadius.sm,
-                      opacity: isEnablingNotifications ? 0.7 : 1,
-                    },
-                  ]}
-                >
-                  <Text style={reminderStyles.enableNotifBtnText}>
-                    {isEnablingNotifications ? 'Enabling…' : 'Enable Notifications'}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <Text style={[reminderStyles.sublabel, { color: colors.textMuted, marginTop: 16 }]}>Reminder time</Text>
-            <TimePicker
-              hour={reminderHour}
-              minute={reminderMinute}
-              onChangeHour={setReminderHour}
-              onChangeMinute={setReminderMinute}
-            />
-
-            <Text style={[reminderStyles.sublabel, { color: colors.textMuted, marginTop: 16 }]}>Reminder days</Text>
-            <View style={reminderStyles.dayRow}>
-              {DAY_LABELS.map((label, idx) => {
-                const day = idx as ReminderDay;
-                const active = reminderDays.includes(day);
-                return (
-                  <TouchableOpacity
-                    key={label}
-                    onPress={() => toggleDay(day)}
-                    style={[
-                      reminderStyles.dayChip,
-                      {
-                        backgroundColor: active ? colors.accent : colors.border,
-                        borderRadius: theme.borderRadius.pill,
-                      },
-                    ]}
-                  >
-                    <Text style={[reminderStyles.dayLabel, { color: active ? '#FFFFFF' : colors.textSecondary }]}>
-                      {label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {isPro && (
-              <View style={[reminderStyles.digestRow, { borderTopColor: colors.border }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[reminderStyles.digestLabel, { color: colors.textPrimary }]}>Morning Digest</Text>
-                  <Text style={[reminderStyles.digestSub, { color: colors.textMuted }]}>8 AM summary of yesterday's saves · Pro</Text>
-                </View>
-                <Switch
-                  value={morningDigest}
-                  onValueChange={setMorningDigest}
-                  trackColor={{ true: colors.accent }}
-                />
-              </View>
-            )}
-
-            <TouchableOpacity
-              onPress={() => void saveReminders()}
-              disabled={isSavingReminder}
-              style={[reminderStyles.saveBtn, { backgroundColor: colors.accent, borderRadius: theme.borderRadius.sm }]}
-            >
-              <Text style={reminderStyles.saveBtnText}>
-                {isSavingReminder ? 'Saving…' : 'Save Reminders'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          <ReminderSettings />
         </Section>
 
         {/* ── Categories §3.7.3 ─────────────────────────────────────── */}
@@ -801,9 +562,9 @@ export default function SettingsScreen(): React.JSX.Element {
             onPress={() => void handleAddCategory()}
             style={[catStyles.addBtn, { borderTopColor: colors.border }]}
           >
-            <Text style={[catStyles.addBtnText, { color: !isPro && categories.length >= 3 ? colors.textMuted : colors.accent }]}>
+            <Text style={[catStyles.addBtnText, { color: isAtCategoryLimit ? colors.textMuted : colors.accent }]}>
               + Add Category
-              {!isPro && categories.length >= 3 ? '  (Pro)' : ''}
+              {isAtCategoryLimit ? '  (Pro)' : ''}
             </Text>
           </TouchableOpacity>
         </Section>
@@ -826,7 +587,7 @@ export default function SettingsScreen(): React.JSX.Element {
               label="Upgrade to Pro"
               sublabel="Unlimited saves, categories & more"
               right={<Text style={[styles.chevron, { color: colors.accent }]}>›</Text>}
-              onPress={() => {/* navigate to paywall */}}
+              onPress={() => openPaywall('settings')}
               isLast
             />
           )}
@@ -865,7 +626,7 @@ export default function SettingsScreen(): React.JSX.Element {
         cat={editingCat}
         visible={catEditVisible}
         isPro={isPro}
-        onSave={(id, name, emoji) => void saveCategoryEdit(id, name, emoji)}
+        onSave={(id, name, emoji, override) => void saveCategoryEdit(id, name, emoji, override)}
         onClose={() => setCatEditVisible(false)}
       />
 
@@ -914,26 +675,20 @@ export default function SettingsScreen(): React.JSX.Element {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={async () => {
-                    console.log('[settings] Create category pressed');
-                    console.log('[settings] newCatName before trim:', newCatName);
                     const name = newCatName.trim();
-                    if (!name) {
-                      console.log('[settings] Create aborted — empty name');
-                      return;
-                    }
+                    if (!name) return;
                     try {
-                      console.log('[settings] POST /categories payload:', { name, emoji: '📌' });
-                      const res = await apiClient.post<Category>('/categories', {
-                        name,
-                        emoji: '📌',
-                      });
-                      console.log('[settings] POST /categories response:', res.data);
-                      setCategories((prev) => [...prev, res.data]);
+                      await createCategory(name, '📌');
                       analytics.settingsCategoryCreated();
                       setNewCatVisible(false);
                     } catch (err) {
-                      console.log('[settings] POST /categories error:', err);
-                      Alert.alert('Error', 'Could not create category.');
+                      if (isLimitError(err)) {
+                        // The interceptor has opened the paywall; this RN Modal
+                        // renders above navigation and would hide it.
+                        setNewCatVisible(false);
+                        return;
+                      }
+                      Alert.alert('Error', getApiError(err)?.message ?? 'Could not create category.');
                     }
                   }}
                 >
@@ -1034,39 +789,6 @@ export default function SettingsScreen(): React.JSX.Element {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Reminder sub-styles
-// ─────────────────────────────────────────────────────────────────────────────
-
-const reminderStyles = StyleSheet.create({
-  container: { paddingBottom: 16 },
-  sublabel: { fontSize: 13, fontWeight: '600', letterSpacing: 0.5 },
-  notifRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: 16,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 12,
-  },
-  notifStatus: { fontSize: 16, fontWeight: '500', marginTop: 2 },
-  enableNotifBtn: { paddingHorizontal: 16, paddingVertical: 10 },
-  enableNotifBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
-  dayRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  dayChip: { paddingHorizontal: 10, paddingVertical: 6 },
-  dayLabel: { fontSize: 13, fontWeight: '600' },
-  digestRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 16,
-    paddingTop: 16,
-  },
-  digestLabel: { fontSize: 15, fontWeight: '500' },
-  digestSub: { fontSize: 12 },
-  saveBtn: { marginTop: 20, height: 48, alignItems: 'center', justifyContent: 'center' },
-  saveBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Category sub-styles

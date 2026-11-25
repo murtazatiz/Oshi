@@ -3,7 +3,8 @@ import multer from 'multer';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth';
 import { supabaseAdmin } from '../middleware/auth';
-import { Errors } from '../middleware/errorHandler';
+import { AppError, Errors } from '../middleware/errorHandler';
+import { purgeDate } from '../services/purgeService';
 import { prisma } from '../lib/prisma';
 
 const router = Router();
@@ -52,6 +53,8 @@ const PatchMeSchema = z.object({
    * modal (PRD §3.4.2) — prevents the modal from appearing again.
    */
   notification_reask_shown: z.boolean().optional(),
+  /** Mirrors the app's analytics opt-out so server-side events respect it */
+  analytics_opt_out: z.boolean().optional(),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +73,7 @@ function formatUser(user: {
   notificationPermission: string;
   reminderTime: string;
   reminderDays: unknown;
+  morningDigest: boolean;
   trialStartedAt: Date | null;
 }): Record<string, unknown> {
   const out: Record<string, unknown> = {
@@ -81,6 +85,7 @@ function formatUser(user: {
     notification_permission: user.notificationPermission,
     reminder_time: user.reminderTime,
     reminder_days: user.reminderDays,
+    morning_digest: user.morningDigest,
   };
 
   if (user.displayName !== null) out.display_name = user.displayName;
@@ -106,6 +111,7 @@ const userSelect = {
   notificationPermission: true,
   reminderTime: true,
   reminderDays: true,
+  morningDigest: true,
   trialStartedAt: true,
 } as const;
 
@@ -113,6 +119,7 @@ const userSelect = {
 const getMeSelect = {
   ...userSelect,
   createdAt: true,
+  deletedAt: true,
   notificationReaskShown: true,
   trialExpiryBannerDue: true,
 } as const;
@@ -134,6 +141,17 @@ const getMeSelect = {
 //   trial_expiry_banner_due (PRD §3.4.3):
 //     Set to true by the trial_expiry_day BullMQ job.
 //     App renders the "Your Pro trial ends today — Upgrade Now" top banner.
+//
+//   upsell_banner_due (PRD §8.3 "Day 5 soft upsell banner"):
+//     true for trial users whose account is ≥ 5 days old — a conversion
+//     nudge in the last days of the 7-day trial. (Every signup starts on a
+//     trial, so "free users" in §8.3 can only mean not-yet-paying users; the
+//     post-trial free state has its own banner below.) The app snoozes it.
+//
+//   downgrade_banner_due (PRD §3.7.4):
+//     true on the free plan — after a trial ends or a subscription expires.
+//     App renders "You're on the free plan — some features are limited",
+//     dismissible once per session.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get(
   '/me',
@@ -181,6 +199,23 @@ router.get(
         response.trial_expiry_banner_due = true;
       }
 
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      if (user.subscriptionStatus === 'trial' && user.createdAt < fiveDaysAgo) {
+        response.upsell_banner_due = true;
+      }
+
+      if (user.subscriptionStatus === 'free') {
+        response.downgrade_banner_due = true;
+      }
+
+      // PRD §3.7.5 — a soft-deleted user signing back in within the window is
+      // offered a restore. Every sign-in path loads this endpoint, so it's the
+      // one place the app learns the account is pending deletion.
+      if (user.deletedAt !== null) {
+        response.account_deleted_at = user.deletedAt.toISOString();
+        response.purge_after = purgeDate(user.deletedAt).toISOString();
+      }
+
       res.json(response);
     } catch (err) {
       next(err);
@@ -207,6 +242,7 @@ router.patch(
         notification_permission,
         last_opened_at,
         notification_reask_shown,
+        analytics_opt_out,
       } = parsed.data;
 
       // Build update payload — only include provided fields
@@ -216,6 +252,7 @@ router.patch(
         notificationPermission?: string;
         lastOpenedAt?: Date;
         notificationReaskShown?: boolean;
+        analyticsOptOut?: boolean;
       } = {};
 
       if (display_name !== undefined) data.displayName = display_name;
@@ -226,6 +263,7 @@ router.patch(
         data.lastOpenedAt = new Date(last_opened_at);
       if (notification_reask_shown !== undefined)
         data.notificationReaskShown = notification_reask_shown;
+      if (analytics_opt_out !== undefined) data.analyticsOptOut = analytics_opt_out;
 
       const updated = await prisma.user.update({
         where: { id: req.userId },
@@ -330,6 +368,40 @@ router.post(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// POST /users/me/restore — undo account deletion within the window (PRD §3.7.5)
+//
+// Clears deleted_at so the nightly purge no longer targets the account.
+// Nothing was removed at deletion time, so the account comes back intact.
+// 404 when the account isn't pending deletion or the window has passed.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post(
+  '/me/restore',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: req.userId },
+        select: { deletedAt: true },
+      });
+
+      if (!user || user.deletedAt === null || purgeDate(user.deletedAt) <= new Date()) {
+        next(new AppError('NOT_FOUND', 'There is no account deletion to undo.', 404));
+        return;
+      }
+
+      const restored = await prisma.user.update({
+        where: { id: req.userId },
+        data: { deletedAt: null },
+        select: userSelect,
+      });
+
+      res.json(formatUser(restored));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DELETE /users/me — initiate soft delete (PRD §3.7.5)
 //
 // Flow:
@@ -339,7 +411,9 @@ router.post(
 // Notes:
 //   - Supabase JWTs expire after 1 hour — no explicit session revocation needed
 //     for the MVP. The mobile app clears SecureStore on receiving this response.
-//   - A nightly cron job permanently purges rows where deleted_at < NOW() - 30 days.
+//   - The nightly purge (services/purgeService.ts) permanently removes the user,
+//     all their rows, their avatar and their Supabase Auth account once
+//     deleted_at < NOW() - 30 days.
 //   - Users who sign in within the 30-day window are offered account restoration
 //     (PRD §3.7.5 — handled by the auth flow, not this endpoint).
 // ─────────────────────────────────────────────────────────────────────────────

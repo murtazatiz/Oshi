@@ -448,8 +448,8 @@ Per cursor rules: JWT/session stored in Expo SecureStore. Zustand persist only f
 - [ ] iOS share extension cold-start performance (<1.5s target)
 - [ ] Android share handler full flow
 - [ ] Reanimated 2 animations (currently using RN core Animated)
-- [ ] Morning Digest notification (Pro feature)
-- [ ] Per-category reminder overrides (Pro feature)
+- [x] Morning Digest notification (Pro feature) — 2026-11-23, needs the manual migration (ADR-0020)
+- [x] Per-category reminder overrides (Pro feature) — 2026-11-24
 - [ ] EAS production submit credentials (placeholders in eas.json)
 
 ### Not Yet Started
@@ -469,10 +469,12 @@ Per cursor rules: JWT/session stored in Expo SecureStore. Zustand persist only f
 | POST | `/auth/signup` | Create account + 11 default categories + trial |
 | POST | `/auth/signin` | Sign in |
 | POST | `/auth/reset-password` | Send reset email |
+| POST | `/auth/update-password` | Set new password with reset token |
 | GET | `/saves` | List saves (sort, search, cursor pagination; app uses limit=500) |
 | POST | `/saves` | Create save (returns `{ duplicate: true }` if URL exists) |
 | PATCH | `/saves/:id` | Update status, category, note, manual sort order |
 | DELETE | `/saves/:id` | Soft delete |
+| POST | `/saves/:id/restore` | Undo a soft delete (added 2026-09-18) |
 | GET | `/categories` | List categories with unread/total counts |
 | POST | `/categories` | Create category (free: max 3) |
 | DELETE | `/categories/:id` | Delete category (moves saves to Other) |

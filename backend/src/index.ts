@@ -24,8 +24,11 @@ import {
 import {
   startDailyReminderScheduler,
   startMonthlySaveCountReset,
+  startMorningDigestScheduler,
+  startNightlyPurge,
   stopSchedulers,
 } from './cron/scheduler';
+import { shutdownAnalytics } from './services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CORS — implemented exactly as specified in PRD §5.5
@@ -121,6 +124,8 @@ const notifWorker = startNotificationWorker();
 startDeadLinkChecker();
 startDailyReminderScheduler();
 startMonthlySaveCountReset();
+startMorningDigestScheduler();
+startNightlyPurge();
 
 const server = app.listen(PORT, () => {
   const env = process.env.APP_ENV ?? process.env.NODE_ENV ?? 'development';
@@ -142,6 +147,9 @@ async function shutdown(signal: string): Promise<void> {
   // Stop BullMQ workers — lets in-flight jobs finish
   await stopAiWorkers(aiWorkers);
   await stopNotificationWorker(notifWorker);
+
+  // Flush queued server-side analytics events
+  await shutdownAnalytics().catch(() => {});
 
   server.close(() => {
     console.info('[Oshi API] HTTP server closed');

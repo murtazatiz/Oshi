@@ -77,7 +77,8 @@
           "androidMultiIntentFilters": ["text/*"]
         }
       ],
-      "@sentry/react-native"
+      "@sentry/react-native",
+      "expo-font"
     ],
     "extra": {
       "eas": {

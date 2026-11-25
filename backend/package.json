@@ -12,7 +12,6 @@
     "prisma:migrate": "prisma migrate deploy"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^5.22.0",
     "@sentry/node": "^8.x",
     "@supabase/supabase-js": "^2.x",
@@ -27,7 +26,7 @@
     "multer": "^1.4.4",
     "node-cron": "^3.x",
     "openai": "^4.x",
-    "posthog-node": "^4.x",
+    "posthog-node": "^5.74.0",
     "zod": "^3.x"
   },
   "devDependencies": {
@@ -41,6 +40,6 @@
     "typescript": "^5.x"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": "^20.20.0 || >=22.22.0"
   }
 }

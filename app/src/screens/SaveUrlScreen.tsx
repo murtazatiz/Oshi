@@ -30,9 +30,12 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RouteProp } from '@react-navigation/native';
 
 import { useTheme } from '../theme/ThemeContext';
-import { apiClient } from '../services/apiClient';
+import { apiClient, getApiError } from '../services/apiClient';
 import type { MainStackParamList } from '../navigation/types';
 import { useSavesStore } from '../store/savesStore';
+import { isValidHttpUrl } from '../utils/url';
+import analytics from '../services/analytics';
+import type { SaveData } from '../components/OshiCard';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -47,14 +50,7 @@ type SaveState = 'idle' | 'saving' | 'success' | 'error';
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isValidUrl(text: string): boolean {
-  try {
-    const url = new URL(text.trim());
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
+// URL validation shared via utils/url (previously an inline copy here).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -118,7 +114,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
       return;
     }
 
-    if (!isValidUrl(trimmed)) {
+    if (!isValidHttpUrl(trimmed)) {
       setErrorMsg('That doesn\'t look like a valid URL. Make sure it starts with http:// or https://');
       playShake();
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
@@ -129,12 +125,13 @@ export default function SaveUrlScreen(): React.JSX.Element {
     setSaveState('saving');
 
     try {
-      const res = await apiClient.post('/saves', { url: trimmed });
+      const res = await apiClient.post<SaveData & { duplicate?: boolean }>('/saves', { url: trimmed });
       // Optimistically insert the new pending save so the user immediately
       // sees a processing card at the top of the Library.
       // The Supabase Realtime subscription will update it once AI completes.
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      addSaveToTop(res.data as any);
+      addSaveToTop(res.data);
+      if (res.data.duplicate) analytics.saveDuplicateDetected(res.data.platform);
+      else analytics.saveCreated({ platform: res.data.platform, source_app: 'manual' });
       setSaveState('success');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       playSuccess();
@@ -143,9 +140,9 @@ export default function SaveUrlScreen(): React.JSX.Element {
     } catch (err: unknown) {
       setSaveState('error');
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const message =
-        err instanceof Error ? err.message : 'Something went wrong. Please try again.';
-      setErrorMsg(message);
+      // A limit error has already opened the paywall (apiClient interceptor);
+      // the backend's message explains why this save didn't go through.
+      setErrorMsg(getApiError(err)?.message ?? 'Something went wrong. Please try again.');
     }
   }
 
@@ -183,7 +180,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
             },
           ]}
         >
-          <Text style={[styles.title, { color: colors.textPrimary, ...typography.h3 }]}>
+          <Text style={[styles.title, { color: colors.textPrimary, ...typography.heading2 }]}>
             Save a URL
           </Text>
           <TouchableOpacity
@@ -193,7 +190,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
             accessibilityRole="button"
             style={[
               styles.closeBtn,
-              { backgroundColor: colors.border, borderRadius: borderRadius.full ?? 999 },
+              { backgroundColor: colors.border, borderRadius: borderRadius.pill },
             ]}
           >
             <Text style={[styles.closeBtnText, { color: colors.textMuted }]}>✕</Text>
@@ -209,7 +206,7 @@ export default function SaveUrlScreen(): React.JSX.Element {
               style={[styles.successContainer, { transform: [{ scale: successScale }] }]}
             >
               <Text style={styles.successEmoji}>✓</Text>
-              <Text style={[styles.successText, { color: colors.success, ...typography.h3 }]}>
+              <Text style={[styles.successText, { color: colors.success, ...typography.heading2 }]}>
                 Saved!
               </Text>
               <Text style={[styles.successSub, { color: colors.textMuted, ...typography.body }]}>

@@ -2,8 +2,10 @@ import { Worker, type Job } from 'bullmq';
 import { prisma } from '../lib/prisma';
 import { redisConnection, QUEUE_NAMES, type AiProcessingJobData } from '../queue';
 import { fetchContentMetadata } from '../services/metadataService';
-import { classifyContent } from '../services/aiService';
+import { classifyContent, resolveCategoryId } from '../services/aiService';
+import { invalidateSmartSortCache } from '../services/smartSortService';
 import { Sentry } from '../services/sentry';
+import { trackServerEvent } from '../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AI Processing Worker — PRD §1.2 (Architecture) critical path
@@ -37,10 +39,12 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
   // Step 8-9: Fetch metadata
   const metadata = await fetchContentMetadata(url, platform);
 
-  // Fetch the user's categories so the AI can pick from the actual list
+  // Fetch the user's categories so the AI can pick from the actual list.
+  // categoryId here is the PRE-classification category ("Other" at creation) —
+  // kept for cache invalidation once the final category is assigned.
   const save = await prisma.save.findUnique({
     where: { id: saveId },
-    select: { userId: true },
+    select: { userId: true, categoryId: true },
   });
   if (!save) return; // Save was deleted while processing
 
@@ -50,9 +54,6 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
     orderBy: { sortOrder: 'asc' },
   });
   const categoryNames = userCategories.map((c) => c.name);
-  const nameToId = new Map<string, string>(
-    userCategories.map((c) => [c.name.toLowerCase(), c.id]),
-  );
 
   // Step 10: Classify with AI (passing the user's actual category names)
   const classification = await classifyContent(metadata, categoryNames);
@@ -69,16 +70,13 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
         creatorName: metadata.channelOrAuthor || null,
       },
     });
+    void trackServerEvent(save.userId, 'save_ai_failed', { platform: metadata.platform });
     return;
   }
 
-  // Resolve the AI category name to the user's category row using the
-  // previously fetched categories. Matching is case-insensitive and always
-  // falls back to the user's "Other" category when present.
-  let categoryId = nameToId.get(classification.category.toLowerCase()) ?? null;
-  if (!categoryId) {
-    categoryId = nameToId.get('other') ?? null;
-  }
+  // Resolve the AI category name to the user's category row — aiService owns
+  // the matching rules (case-insensitive, "Other" fallback).
+  const categoryId = resolveCategoryId(classification.category, userCategories);
 
   console.log('[ai-processor] Classification result:', {
     category: classification.category,
@@ -102,6 +100,18 @@ async function processJob(job: Job<AiProcessingJobData>): Promise<void> {
       estimatedTimeSeconds: classification.estimated_read_time_seconds || null,
       aiConfidenceScore: classification.confidence_score,
     },
+  });
+
+  // Classification may have moved the save out of its creation-time category
+  // ("Other") — clear the smart-sort ranking cache for both, same contract as
+  // the routes (PRD §3.2.2: any mutation of presence/status/category invalidates).
+  await invalidateSmartSortCache(save.userId, save.categoryId, categoryId);
+
+  void trackServerEvent(save.userId, 'save_ai_processed', {
+    platform: metadata.platform,
+    content_type: classification.content_type,
+    category: classification.category,
+    confidence: classification.confidence_score,
   });
 
   // Step 12: Supabase Realtime fires automatically when the row is updated —

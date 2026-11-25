@@ -11,13 +11,10 @@
  * Uses expo-share-intent's useShareIntentContext() to read the shared content
  * and resetShareIntent() to clear it after processing.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
-  FlatList,
-  Modal,
-  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -28,38 +25,21 @@ import NetInfo from '@react-native-community/netinfo';
 import { useShareIntentContext } from 'expo-share-intent';
 
 import { useTheme } from '../theme/ThemeContext';
-import { apiClient } from '../services/apiClient';
+import { apiClient, isLimitError } from '../services/apiClient';
 import { enqueue } from '../services/offlineQueue';
 import { useSavesStore } from '../store/savesStore';
 import type { SaveData } from '../components/OshiCard';
+import { detectPlatformFromUrl, getPlatformMeta } from '../constants/platforms';
+import { CategoryPickerSheet, type CategoryOption } from '../components/CategoryPickerSheet';
+import analytics from '../services/analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform detection
 // ─────────────────────────────────────────────────────────────────────────────
 
-function detectSourceApp(url: string): string {
-  const lower = url.toLowerCase();
-  if (lower.includes('instagram.com')) return 'instagram';
-  if (lower.includes('youtube.com') || lower.includes('youtu.be')) return 'youtube';
-  if (lower.includes('tiktok.com')) return 'tiktok';
-  if (lower.includes('twitter.com') || lower.includes('x.com')) return 'twitter';
-  if (lower.includes('linkedin.com')) return 'linkedin';
-  if (lower.includes('spotify.com')) return 'spotify';
-  return 'web';
-}
-
-function platformLabel(source: string): string {
-  const labels: Record<string, string> = {
-    instagram: 'Instagram',
-    youtube: 'YouTube',
-    tiktok: 'TikTok',
-    twitter: 'X (Twitter)',
-    linkedin: 'LinkedIn',
-    spotify: 'Spotify',
-    web: 'Web',
-  };
-  return labels[source] ?? 'Link';
-}
+// Platform detection + labels come from constants/platforms (shared with
+// OshiCard and ContentDetailScreen; previously a third diverged copy here
+// that was missing facebook).
 
 function platformLimitedNote(source: string): string | null {
   if (source === 'instagram') return 'Instagram preview may be limited';
@@ -74,75 +54,10 @@ function extractUrl(raw: string): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Category picker
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface CategoryItem {
-  id: string;
-  name: string;
-  emoji: string;
-}
-
-interface CategoryPickerProps {
-  visible: boolean;
-  categories: CategoryItem[];
-  onSelect: (cat: CategoryItem) => void;
-  onClose: () => void;
-}
-
-function CategoryPicker({ visible, categories, onSelect, onClose }: CategoryPickerProps): React.JSX.Element {
-  const { colors, theme } = useTheme();
-  const { borderRadius, spacing } = theme;
-
-  const renderItem = useCallback(
-    ({ item }: { item: CategoryItem }) => (
-      <TouchableOpacity
-        style={[styles.catRow, { paddingVertical: spacing.sm + 4, paddingHorizontal: spacing.md }]}
-        onPress={() => onSelect(item)}
-        activeOpacity={0.65}
-      >
-        <Text style={styles.catEmoji}>{item.emoji}</Text>
-        <Text style={[styles.catName, { color: colors.textPrimary }]}>{item.name}</Text>
-      </TouchableOpacity>
-    ),
-    [onSelect, colors.textPrimary, spacing],
-  );
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: borderRadius.lg,
-              borderTopRightRadius: borderRadius.lg,
-            },
-          ]}
-        >
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-          </View>
-          <Text style={[styles.sheetTitle, { color: colors.textPrimary }]}>Change Category</Text>
-          <FlatList
-            data={categories}
-            renderItem={renderItem}
-            keyExtractor={(item) => item.id}
-            style={{ maxHeight: 350 }}
-          />
-          <View style={{ height: spacing.xl }} />
-        </View>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // ShareHandlerScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Status = 'loading' | 'saved' | 'queued' | 'error';
+type Status = 'loading' | 'saved' | 'queued' | 'limit' | 'error';
 
 export default function ShareHandlerScreen(): React.JSX.Element | null {
   const { hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
@@ -152,7 +67,9 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
   const [status, setStatus] = useState<Status>('loading');
   const [categoryName, setCategoryName] = useState('Other');
   const [savedId, setSavedId] = useState<string | null>(null);
-  const [categories, setCategories] = useState<CategoryItem[]>([]);
+  // Shared with the Library via savesStore — no per-screen copy to go stale
+  const categories = useSavesStore((s) => s.categories);
+  const fetchCategories = useSavesStore((s) => s.fetchCategories);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
 
@@ -192,28 +109,12 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
     }).start();
   }, [resolvedUrl, fadeAnim]);
 
-  // ── Fetch categories ──────────────────────────────────────────────────
+  // ── Categories for the picker ─────────────────────────────────────────
+  // A share can cold-start the app before the Library has loaded categories
 
   useEffect(() => {
-    if (!resolvedUrl) return;
-    async function load(): Promise<void> {
-      try {
-        const res = await apiClient.get<{
-          categories: Array<{ id: string; name: string; emoji?: string }>;
-        }>('/categories');
-        setCategories(
-          res.data.categories.map((c) => ({
-            id: c.id,
-            name: c.name,
-            emoji: c.emoji ?? '📌',
-          })),
-        );
-      } catch {
-        // Categories unavailable — picker will be empty
-      }
-    }
-    void load();
-  }, [resolvedUrl]);
+    if (resolvedUrl && categories.length === 0) void fetchCategories();
+  }, [resolvedUrl, categories.length, fetchCategories]);
 
   // ── Save the URL ──────────────────────────────────────────────────────
 
@@ -221,7 +122,7 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
     if (!resolvedUrl || hasSavedRef.current) return;
     hasSavedRef.current = true;
 
-    const sourceApp = detectSourceApp(resolvedUrl);
+    const sourceApp = detectPlatformFromUrl(resolvedUrl);
 
     async function save(): Promise<void> {
       const netState = await NetInfo.fetch();
@@ -236,10 +137,12 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
       }
 
       try {
-        const res = await apiClient.post<SaveData>('/saves', {
+        const res = await apiClient.post<SaveData & { duplicate?: boolean }>('/saves', {
           url: resolvedUrl,
           source_app: sourceApp,
         });
+        if (res.data.duplicate) analytics.saveDuplicateDetected(res.data.platform);
+        else analytics.saveCreated({ platform: res.data.platform, source_app: sourceApp });
 
         setSavedId(res.data.id);
         if (res.data.category) {
@@ -250,7 +153,16 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
         setStatus('saved');
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         scheduleAutoDismiss();
-      } catch {
+      } catch (err) {
+        if (isLimitError(err)) {
+          // Not a connectivity problem — queueing would retry a save the
+          // server will keep refusing. The apiClient interceptor has opened
+          // the paywall beneath this overlay; auto-dismiss reveals it.
+          setStatus('limit');
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          scheduleAutoDismiss();
+          return;
+        }
         await enqueue(resolvedUrl!, sourceApp);
         setStatus('queued');
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -285,12 +197,13 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
 
   // ── Category change ───────────────────────────────────────────────────
 
-  async function handleCategoryChange(cat: CategoryItem): Promise<void> {
+  async function handleCategoryChange(cat: CategoryOption): Promise<void> {
     setPickerVisible(false);
     setCategoryName(cat.name);
     if (!savedId) return;
     try {
       await apiClient.patch(`/saves/${savedId}`, { category_id: cat.id });
+      analytics.saveCategoryChanged({ save_id: savedId, new_category: cat.name });
     } catch {
       // Non-fatal
     }
@@ -300,8 +213,8 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
 
   if (!hasShareIntent || !resolvedUrl) return null;
 
-  const sourceApp = detectSourceApp(resolvedUrl);
-  const label = platformLabel(sourceApp);
+  const sourceApp = detectPlatformFromUrl(resolvedUrl);
+  const label = getPlatformMeta(sourceApp).label;
   const limitedNote = platformLimitedNote(sourceApp);
 
   // ── Render ────────────────────────────────────────────────────────────
@@ -345,7 +258,7 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
           )}
 
           {/* Category badge — tappable */}
-          {status !== 'loading' && (
+          {(status === 'saved' || status === 'queued') && (
             <TouchableOpacity
               onPress={() => {
                 if (categories.length > 0) setPickerVisible(true);
@@ -382,6 +295,11 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
                 Queued — will save when back online
               </Text>
             )}
+            {status === 'limit' && (
+              <Text style={[styles.statusText, { color: colors.warning }]}>
+                Free-plan limit reached — upgrade to keep saving
+              </Text>
+            )}
             {status === 'error' && (
               <Text style={[styles.statusText, { color: colors.error }]}>Failed to save</Text>
             )}
@@ -403,8 +321,9 @@ export default function ShareHandlerScreen(): React.JSX.Element | null {
       </View>
 
       {/* Category picker */}
-      <CategoryPicker
+      <CategoryPickerSheet
         visible={pickerVisible}
+        title="Change Category"
         categories={categories}
         onSelect={(cat) => void handleCategoryChange(cat)}
         onClose={() => setPickerVisible(false)}
@@ -485,40 +404,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Category picker
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    paddingTop: 8,
-  },
-  handleRow: {
-    alignItems: 'center',
-    paddingBottom: 8,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-  },
-  sheetTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  catRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  catEmoji: {
-    fontSize: 20,
-  },
-  catName: {
-    fontSize: 16,
-    fontWeight: '500',
-  },
 });

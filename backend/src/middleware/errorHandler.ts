@@ -7,6 +7,7 @@ import { Sentry } from '../services/sentry';
 // ─────────────────────────────────────────────────────────────────────────────
 export type ErrorCode =
   | 'UNAUTHORISED'          // 401 — Invalid or expired JWT
+  | 'INVALID_CREDENTIALS'   // 401 — Wrong email/password at signin (API Contract §2)
   | 'FORBIDDEN'             // 403 — Valid JWT but insufficient permissions
   | 'SAVE_LIMIT_REACHED'    // 403 — Free user at 20 save limit
   | 'CATEGORY_LIMIT_REACHED'// 403 — Free user at 3 category limit
@@ -75,7 +76,7 @@ export const Errors = {
   categoryLimitReached: () =>
     new AppError(
       'CATEGORY_LIMIT_REACHED',
-      'You have reached the maximum of 3 categories on the free plan. Upgrade to Oshi Pro for unlimited categories.',
+      'You have reached the maximum of 3 custom categories on the free plan. Upgrade to Oshi Pro for unlimited categories.',
       403,
     ),
 

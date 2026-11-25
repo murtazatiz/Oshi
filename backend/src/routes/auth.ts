@@ -4,7 +4,8 @@
  *   POST /auth/signup          — create account, seed categories, return session
  *   POST /auth/signin          — email/password sign-in, return session
  *   POST /auth/signout         — invalidate session (requires auth)
- *   POST /auth/forgot-password — send password reset email
+ *   POST /auth/reset-password — send password reset email
+ *   POST /auth/update-password — set new password with reset token
  *   POST /auth/reset-password  — update password with OTP token
  */
 import { Router, type Request, type Response, type NextFunction } from 'express';
@@ -12,6 +13,7 @@ import { z } from 'zod';
 
 import { supabaseAdmin, requireAuth } from '../middleware/auth';
 import { authSigninLimiter } from '../middleware/rateLimiter';
+import { DEFAULT_CATEGORIES } from '../constants/defaultCategories';
 import { AppError, Errors } from '../middleware/errorHandler';
 import { prisma } from '../lib/prisma';
 
@@ -52,24 +54,9 @@ const ResetPasswordSchema = z.object({
 // Default categories seeded for every new user — API Contract §2, PRD §5.3
 // 11 categories; "Other" is always last and flagged as system default.
 // ─────────────────────────────────────────────────────────────────────────────
-const DEFAULT_CATEGORIES: Array<{
-  name: string;
-  emoji: string;
-  sortOrder: number;
-  isSystemDefault: boolean;
-}> = [
-  { name: 'Business',    emoji: '💼', sortOrder: 0,  isSystemDefault: false },
-  { name: 'Learning',    emoji: '🎓', sortOrder: 1,  isSystemDefault: false },
-  { name: 'Travel',      emoji: '✈️', sortOrder: 2,  isSystemDefault: false },
-  { name: 'Food',        emoji: '🍔', sortOrder: 3,  isSystemDefault: false },
-  { name: 'Fitness',     emoji: '💪', sortOrder: 4,  isSystemDefault: false },
-  { name: 'Finance',     emoji: '💰', sortOrder: 5,  isSystemDefault: false },
-  { name: 'Technology',  emoji: '💻', sortOrder: 6,  isSystemDefault: false },
-  { name: 'Culture',     emoji: '🎭', sortOrder: 7,  isSystemDefault: false },
-  { name: 'News',        emoji: '📰', sortOrder: 8,  isSystemDefault: false },
-  { name: 'Personal',    emoji: '📝', sortOrder: 9,  isSystemDefault: false },
-  { name: 'Other',       emoji: '📌', sortOrder: 10, isSystemDefault: true  },
-];
+// The 11 default categories seeded at signup — PRD §3.2.1, shared with the
+// AI fallback list via constants/defaultCategories (previously two diverged
+// hardcoded lists).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper — format a Supabase session into the API contract shape
@@ -223,7 +210,7 @@ router.post(
         // Do not reveal whether the email exists — generic credential error
         res.status(401).json({
           error: {
-            code: 'UNAUTHORISED',
+            code: 'INVALID_CREDENTIALS',
             message: 'Invalid email or password.',
             statusCode: 401,
           },
@@ -288,14 +275,15 @@ router.post(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /auth/forgot-password
+// POST /auth/reset-password
 //
-// Sends a password reset email via Supabase.
+// Sends a password reset email via Supabase (API Contract §2 names this
+// endpoint and shape; the token exchange lives at /auth/update-password).
 // Always returns 200 regardless of whether the email exists — prevents
 // account enumeration (API Contract §2, PRD §9).
 // ─────────────────────────────────────────────────────────────────────────────
 router.post(
-  '/forgot-password',
+  '/reset-password',
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const parsed = ForgotPasswordSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -321,7 +309,7 @@ router.post(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /auth/reset-password
+// POST /auth/update-password
 //
 // The mobile app receives an OTP token via the oshi://auth/reset?token= deep
 // link and POSTs it here along with the new password.
@@ -329,7 +317,7 @@ router.post(
 // Uses verifyOtp to exchange the token for a session, then updates the password.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post(
-  '/reset-password',
+  '/update-password',
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const parsed = ResetPasswordSchema.safeParse(req.body);
     if (!parsed.success) {

@@ -33,9 +33,11 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { useTheme } from '../theme/ThemeContext';
-import { apiClient } from '../services/apiClient';
+import { apiClient, isLimitError } from '../services/apiClient';
+import analytics from '../services/analytics';
 import { useSavesStore } from '../store/savesStore';
 import type { MainStackParamList } from '../navigation/types';
+import { isValidHttpUrl } from '../utils/url';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -63,13 +65,8 @@ function extractUrls(text: string): string[] {
   const unique = new Set<string>();
   for (const line of lines) {
     const trimmed = line.trim();
-    try {
-      const u = new URL(trimmed);
-      if (u.protocol === 'http:' || u.protocol === 'https:') {
-        unique.add(trimmed);
-      }
-    } catch {
-      // not a valid URL
+    if (isValidHttpUrl(trimmed)) {
+      unique.add(trimmed);
     }
   }
   return [...unique];
@@ -84,13 +81,8 @@ function parseBookmarkHtml(html: string): BookmarkItem[] {
   while ((match = linkRegex.exec(html)) !== null) {
     const url = match[1]?.trim() ?? '';
     const title = match[2]?.trim() ?? '';
-    try {
-      const u = new URL(url);
-      if (u.protocol === 'http:' || u.protocol === 'https:') {
-        items.push({ id: String(id++), title: title || url, url, selected: true });
-      }
-    } catch {
-      // skip invalid
+    if (isValidHttpUrl(url)) {
+      items.push({ id: String(id++), title: title || url, url, selected: true });
     }
   }
   return items;
@@ -102,35 +94,67 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+interface ImportResult {
+  added: number;
+  duplicates: number;
+  failed: number;
+  /** URLs not attempted because a free-plan limit was hit (PRD §8.1 / §3.7.4). */
+  notImported: number;
+}
+
+const EMPTY_RESULT: ImportResult = { added: 0, duplicates: 0, failed: 0, notImported: 0 };
+
 async function importUrls(
   urls: string[],
   addSaveToTop: (save: never) => void,
   onProgress: (done: number, total: number) => void,
-): Promise<{ added: number; skipped: number }> {
-  let added = 0;
-  let skipped = 0;
+): Promise<ImportResult> {
+  const result = { ...EMPTY_RESULT };
   for (let i = 0; i < urls.length; i++) {
     const url = urls[i] ?? '';
     onProgress(i, urls.length);
     try {
-      const res = await apiClient.post<{ duplicate?: boolean }>('/saves', { url });
+      const res = await apiClient.post<{ duplicate?: boolean; platform?: string }>('/saves', { url });
+      const platform = res.data.platform ?? 'other';
       if (res.data.duplicate) {
-        skipped++;
+        result.duplicates++;
+        analytics.saveDuplicateDetected(platform);
       } else {
-        added++;
+        result.added++;
+        analytics.saveCreated({ platform, source_app: 'import' });
         // Optimistically add to store so Library tab updates immediately
         addSaveToTop(res.data as never);
       }
-    } catch {
-      // Treat failures as skipped rather than aborting the batch
-      skipped++;
+    } catch (err) {
+      if (isLimitError(err)) {
+        // Every remaining URL would hit the same limit — stop here. The
+        // apiClient interceptor has already opened the paywall.
+        result.notImported = urls.length - i;
+        break;
+      }
+      // Other failures don't abort the batch
+      result.failed++;
     }
     if (i < urls.length - 1) {
       await sleep(DELAY_BETWEEN_MS);
     }
   }
   onProgress(urls.length, urls.length);
-  return { added, skipped };
+  return result;
+}
+
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}
+
+function describeImportResult(r: ImportResult): string {
+  const parts = [`${plural(r.added, 'save')} added`];
+  if (r.duplicates > 0) parts.push(`${plural(r.duplicates, 'duplicate')} skipped`);
+  if (r.failed > 0) parts.push(`${r.failed} failed`);
+  if (r.notImported > 0) {
+    parts.push(`${r.notImported} not imported — free-plan limit reached`);
+  }
+  return parts.join(', ');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,7 +191,7 @@ function PasteUrlsTab({ onGoToLibrary }: PasteTabProps): React.JSX.Element {
   const [text, setText] = useState('');
   const [phase, setPhase] = useState<ImportPhase>('idle');
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [result, setResult] = useState({ added: 0, skipped: 0 });
+  const [result, setResult] = useState<ImportResult>(EMPTY_RESULT);
 
   const detectedUrls = useMemo(() => extractUrls(text), [text]);
 
@@ -176,12 +200,12 @@ function PasteUrlsTab({ onGoToLibrary }: PasteTabProps): React.JSX.Element {
     setPhase('importing');
     setProgress({ done: 0, total: detectedUrls.length });
     try {
-      const { added, skipped } = await importUrls(
+      const importResult = await importUrls(
         detectedUrls,
         addSaveToTop,
         (done, total) => setProgress({ done, total }),
       );
-      setResult({ added, skipped });
+      setResult(importResult);
       setPhase('done');
     } catch {
       setPhase('error');
@@ -196,8 +220,7 @@ function PasteUrlsTab({ onGoToLibrary }: PasteTabProps): React.JSX.Element {
           Import complete
         </Text>
         <Text style={[tabStyles.successBody, { color: colors.textSecondary }]}>
-          {result.added} save{result.added !== 1 ? 's' : ''} added
-          {result.skipped > 0 ? `, ${result.skipped} duplicate${result.skipped !== 1 ? 's' : ''} skipped` : ''}
+          {describeImportResult(result)}
         </Text>
         <TouchableOpacity
           style={[tabStyles.primaryBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}
@@ -353,7 +376,7 @@ function BrowserBookmarksTab({ onGoToLibrary }: BookmarksTabProps): React.JSX.El
   const [bookmarks, setBookmarks] = useState<BookmarkItem[]>([]);
   const [parseError, setParseError] = useState('');
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [result, setResult] = useState({ added: 0, skipped: 0 });
+  const [result, setResult] = useState<ImportResult>(EMPTY_RESULT);
   const [showInstructions, setShowInstructions] = useState(true);
 
   const selectedBookmarks = useMemo(() => bookmarks.filter((b) => b.selected), [bookmarks]);
@@ -374,7 +397,7 @@ function BrowserBookmarksTab({ onGoToLibrary }: BookmarksTabProps): React.JSX.El
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'text/html',
-        copyToCacheDir: true,
+        copyToCacheDirectory: true,
       });
       if (result.canceled) return;
       const asset = result.assets?.[0];
@@ -402,12 +425,12 @@ function BrowserBookmarksTab({ onGoToLibrary }: BookmarksTabProps): React.JSX.El
     const urls = selectedBookmarks.map((b) => b.url);
     setProgress({ done: 0, total: urls.length });
     try {
-      const { added, skipped } = await importUrls(
+      const importResult = await importUrls(
         urls,
         addSaveToTop,
         (done, total) => setProgress({ done, total }),
       );
-      setResult({ added, skipped });
+      setResult(importResult);
       setPhase('done');
     } catch {
       setPhase('error');
@@ -420,8 +443,7 @@ function BrowserBookmarksTab({ onGoToLibrary }: BookmarksTabProps): React.JSX.El
         <Text style={tabStyles.successEmoji}>✅</Text>
         <Text style={[tabStyles.successTitle, { color: colors.textPrimary }]}>Import complete</Text>
         <Text style={[tabStyles.successBody, { color: colors.textSecondary }]}>
-          {result.added} save{result.added !== 1 ? 's' : ''} added
-          {result.skipped > 0 ? `, ${result.skipped} duplicate${result.skipped !== 1 ? 's' : ''} skipped` : ''}
+          {describeImportResult(result)}
         </Text>
         <TouchableOpacity
           style={[tabStyles.primaryBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}

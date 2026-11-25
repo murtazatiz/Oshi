@@ -4,9 +4,12 @@ import { requireAuth } from '../middleware/auth';
 import { Errors } from '../middleware/errorHandler';
 import { prisma } from '../lib/prisma';
 import { invalidateSmartSortCache } from '../services/smartSortService';
+import { slugifyCategoryName } from '../services/notificationService';
+import { FREE_CUSTOM_CATEGORY_LIMIT } from '../constants/limits';
 import type { Prisma } from '@prisma/client';
 
 const router = Router();
+
 router.use(requireAuth);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,8 +25,12 @@ const PostCategorySchema = z.object({
 const PatchCategorySchema = z.object({
   name: z.string().min(1).max(50).optional(),
   emoji: z.string().min(1).max(10).optional(),
-  // TIMETZ stored as string — format validated by DB CHECK constraint
-  reminder_override_time: z.string().nullable().optional(),
+  /** Pro per-category reminder (PRD §3.7.2), UTC "HH:MM:SS+00"; null clears it */
+  reminder_override_time: z
+    .string()
+    .regex(/^\d{2}:\d{2}:\d{2}[+-]\d{2}(:\d{2})?$/, 'reminder_override_time must be like "19:00:00+00"')
+    .nullable()
+    .optional(),
   sort_order: z.number().int().min(0).optional(),
 });
 
@@ -46,15 +53,19 @@ function formatCategory(
   return {
     id: cat.id,
     name: cat.name,
+    // Deep-link slug (oshi://library/:categorySlug, PRD §4) — same formula
+    // the reminder notifications use.
+    slug: slugifyCategoryName(cat.name),
     emoji: cat.emoji,
     sort_order: cat.sortOrder,
     is_system_default: cat.isSystemDefault,
     unread_count: counts.unread,
     total_count: counts.total,
     created_at: cat.createdAt.toISOString(),
+    // Omit when null (API contract §1) — was previously emitted in both branches
     ...(cat.reminderOverrideTime !== null
       ? { reminder_override_time: cat.reminderOverrideTime }
-      : { reminder_override_time: null }),
+      : {}),
   };
 }
 
@@ -145,9 +156,14 @@ router.post(
       const isPro =
         user?.subscriptionStatus === 'pro' || user?.subscriptionStatus === 'trial';
 
+      // PRD §8.1/§8.3: free users get 3 CUSTOM categories on top of the 11
+      // seeded defaults — counting all categories would block every free
+      // user forever, since each starts with 11.
       if (!isPro) {
-        const categoryCount = await prisma.category.count({ where: { userId } });
-        if (categoryCount >= 3) {
+        const customCategoryCount = await prisma.category.count({
+          where: { userId, isSystemDefault: false },
+        });
+        if (customCategoryCount >= FREE_CUSTOM_CATEGORY_LIMIT) {
           next(Errors.categoryLimitReached());
           return;
         }
@@ -216,6 +232,19 @@ router.patch(
         return;
       }
 
+      // Setting a per-category reminder is Pro-only; clearing one is always allowed
+      if (typeof reminder_override_time === 'string') {
+        const user = await prisma.user.findUnique({
+          where: { id: userId },
+          select: { subscriptionStatus: true },
+        });
+        const isPro = user?.subscriptionStatus === 'pro' || user?.subscriptionStatus === 'trial';
+        if (!isPro) {
+          next(Errors.forbidden('Per-category reminder times are an Oshi Pro feature.'));
+          return;
+        }
+      }
+
       const data: Prisma.CategoryUpdateInput = {};
       if (name !== undefined) data.name = name;
       if (emoji !== undefined) data.emoji = emoji;
@@ -240,7 +269,15 @@ router.patch(
       // Category name/emoji changes affect smart sort display — invalidate cache
       await invalidateSmartSortCache(userId, categoryId);
 
-      res.json(formatCategory(updated, { unread: 0, total: 0 }));
+      // Real counts — previously hardcoded to 0 even for populated categories
+      const [total, unread] = await Promise.all([
+        prisma.save.count({ where: { userId, categoryId, deletedAt: null } }),
+        prisma.save.count({
+          where: { userId, categoryId, status: 'unread', deletedAt: null },
+        }),
+      ]);
+
+      res.json(formatCategory(updated, { unread, total }));
     } catch (err) {
       next(err);
     }

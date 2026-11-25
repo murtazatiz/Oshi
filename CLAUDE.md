@@ -47,7 +47,10 @@ npm run build              # tsc → dist/
 npm start                  # node dist/index.js (production)
 npm run lint               # tsc --noEmit  (THIS is the only "lint"/typecheck)
 npm run prisma:generate    # regenerate Prisma client after schema.prisma changes
-npm run prisma:migrate     # prisma migrate deploy (uses DIRECT_URL, not pooled)
+npm run prisma:migrate     # prisma migrate deploy — currently a NO-OP: there is no
+                           # migrations baseline. Schema changes ship as hand-run SQL
+                           # in prisma/manual-migrations/, applied in Supabase BEFORE
+                           # deploying (ADR-0020)
 ```
 
 ### App (`cd app`)
@@ -96,7 +99,8 @@ src/
   middleware/         auth.ts (requireAuth), errorHandler.ts, rateLimiter.ts
   routes/             auth, saves, categories, engagement, users, notifications, subscriptions
   services/           aiService, metadataService, youtubeService, smartSortService,
-                      notificationService, sentry
+                      notificationService, purgeService, analytics (posthog-node,
+                      respects users.analytics_opt_out — ADR-0024), sentry
   queue/index.ts      BullMQ queues + enqueue helpers + Redis connection
   workers/            aiProcessor, deadLinkChecker, notificationScheduler
   cron/scheduler.ts   node-cron: daily reminders (every min), monthly counter reset
@@ -121,6 +125,8 @@ src/
   array fields.
 - Rate limiting: a global limiter is applied; tighter per-route limiters exist
   (e.g. `savesLimiter` on `POST /saves`).
+- Pushes go through `notificationService.sendLoggedPush` only (logs first,
+  sends the log id + deep link in the payload).
 - **Never AI-process inside a request.** `POST /saves` returns `201` in <300ms
   and enqueues a BullMQ job; the worker does metadata fetch + OpenAI call.
 
@@ -141,6 +147,13 @@ Cron (`cron/scheduler.ts`, all UTC):
   hour:minute matches now and whose `reminder_days` includes today; skips users
   with zero unread saves or who opened the app within the last 2h.
 - Monthly reset: `0 0 1 * *` resets `items_saved_this_month` to 0.
+- Per-category reminders (Pro): the same every-minute tick sends a category's
+  own reminder at its `reminder_override_time`; Pro users' daily reminder
+  then skips categories that have one.
+- Morning Digest: every minute, Pro/trial users with `morning_digest` on whose
+  local time (`users.timezone`) is 08:00 get a summary of yesterday's saves.
+- Nightly purge: `0 3 * * *` permanently removes soft-deleted saves (>7 days)
+  and users (>30 days).
 
 ### Data model (`prisma/schema.prisma`)
 Tables: `users`, `categories`, `saves`, `user_engagement_signals`,
@@ -149,7 +162,9 @@ Tables: `users`, `categories`, `saves`, `user_engagement_signals`,
 - Enum-like fields are plain strings documented at the top of the schema;
   valid values are enforced by **Supabase CHECK constraints**, not by Prisma.
 - Soft deletes: `saves.deleted_at` (purged after 7 days), `users.deleted_at`
-  (30 days). Always filter `deletedAt: null` in queries.
+  (30 days; the purge also deletes the avatar and the Supabase Auth account).
+  The nightly purge is `services/purgeService.ts` (ADR-0021). Always filter
+  `deletedAt: null` in queries.
 - `DATABASE_URL` must include `?pgbouncer=true` (pooled, runtime). Migrations
   use `DIRECT_URL` (non-pooled) because PgBouncer blocks advisory locks.
 
@@ -167,13 +182,18 @@ Sentry error boundary (`wrapWithSentry`).
 src/
   navigation/   AppNavigator.tsx (stacks/tabs + deep-link config), types.ts (param lists)
   screens/      auth/, onboarding/, library/, search/, settings/ + top-level screens
-  components/   OshiCard, CategoryTabs, StreakDisplay, UndoToast, *SkeletonCard, etc.
+  components/   OshiCard, CategoryTabs, StreakDisplay, UndoToast, *SkeletonCard,
+                ReminderSettings (shared by Settings + RemindersScreen),
+                CategoryPickerSheet (the only category picker), TimePicker,
+                AccountRestorePrompt, etc.
   store/        Zustand: authStore, savesStore, onboardingStore, subscriptionStore
   services/     apiClient (axios), supabase, analytics, errorMonitoring, purchases,
-                offlineQueue, shareExtension
+                offlineQueue, shareExtension, realtime, paywall,
+                notificationTaps (push tap → deep link + log-open, ADR-0022)
   lib/          supabase.ts (re-export for back-compat)
   theme/        index.ts (design tokens), ThemeContext.tsx (light/dark)
-  utils/        thumbnailCache.ts
+  utils/        thumbnailCache.ts, reminderTime.ts (local↔UTC reminder times —
+                always use it; never stamp a local time "+00")
 share-extension/  ShareExtension.tsx (iOS App Group pending-share handler)
 plugins/          withShareExtension.js, withAndroidShareTarget.js (Expo config plugins)
 ```
@@ -200,7 +220,12 @@ is exported for navigating outside the React tree.
 - `services/apiClient.ts` — axios instance, base URL from
   `EXPO_PUBLIC_API_BASE_URL`. A request interceptor attaches the current
   Supabase JWT; a response interceptor does a **single silent refresh on 401**
-  (queuing concurrent requests), and signs out if refresh fails.
+  (queuing concurrent requests), and signs out if refresh fails. It also opens
+  the paywall on `SAVE_LIMIT_REACHED` / `CATEGORY_LIMIT_REACHED` (via
+  `services/paywall.ts openPaywall`, the single entry point for every paywall
+  trigger) and still rejects. Background callers of a limited endpoint must pass
+  `{ skipPaywall: true }` (the offline-queue flush does). Read error envelopes
+  with `getApiError()` / `isLimitError()` rather than `err.message`.
 - `services/supabase.ts` is the canonical Supabase client. JWTs are stored in
   **Expo SecureStore only** (key `oshi_session`) via a custom storage adapter —
   never AsyncStorage. The client uses the **anon** key (`EXPO_PUBLIC_*`).
@@ -215,17 +240,21 @@ colours/sizes. Light/dark is provided via `ThemeContext`.
 - **auth**: `POST /auth/signup`, `/signin`, `/reset-password`, + 2 more
 - **saves**: `GET /saves`, `GET /saves/check-duplicate` (registered before `/:id`),
   `GET /saves/:id`, `POST /saves`, `PATCH /saves/:id`, `DELETE /saves/:id`,
-  `POST /saves/:id/retry`
+  `POST /saves/:id/restore` (undo a soft delete), `POST /saves/:id/retry`
 - **categories**: `GET`, `POST`, `PATCH /:id`, `DELETE /:id` (deletes move saves to "Other")
 - **engagement**: `POST /engagement/signal` (feeds the AI smart-sort)
-- **users**: `GET /users/me`, `PATCH /users/me`, `POST /users/avatar`, `DELETE /users/me`
+- **users**: `GET /users/me`, `PATCH /users/me`, `POST /users/avatar`, `DELETE /users/me`,
+  `POST /users/me/restore` (undo deletion inside the 30-day window)
 - **notifications**: register token, log opens, etc.
 - **subscriptions**: `POST /subscriptions/webhook` (RevenueCat; validated via
   `REVENUECAT_WEBHOOK_AUTH_HEADER`) + status read
 
 ## Key business rules (don't break these)
 - Free tier: 20 saves/month (enforced atomically in `POST /saves`), 3 custom
-  categories. Pro/trial bypass both.
+  categories: rows with `is_system_default = false`; the 11 seeded defaults
+  never count (ADR-0019). A free user holding more than 3 (after a downgrade)
+  can't add saves until back within it (PRD §3.7.4). Limits live in
+  `backend/src/constants/limits.ts`. Pro/trial bypass all of these.
 - New signups get **11 default categories** + `trial_started_at = NOW()`.
 - Save status: `unread` → `done` (sets `done_at`) / `skipped` (sets `skipped_at`);
   reverting to `unread` clears both.
@@ -242,7 +271,8 @@ needed vars from code.
 **Backend** (`backend/.env`): `DATABASE_URL` (with `?pgbouncer=true`),
 `DIRECT_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `REDIS_URL`,
 `OPENAI_API_KEY`, `YOUTUBE_DATA_API_KEY`, `REVENUECAT_WEBHOOK_AUTH_HEADER`,
-`SENTRY_DSN`, `PORT`, `APP_ENV`/`NODE_ENV`.
+`SENTRY_DSN`, `PORT`, `APP_ENV`/`NODE_ENV`, `POSTHOG_API_KEY` (optional —
+server-side analytics are a no-op without it) and `POSTHOG_HOST` (optional).
 
 **App** (`app/.env`, must be `EXPO_PUBLIC_*` to reach the client):
 `EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`,
@@ -277,8 +307,9 @@ existing code**, not the rule, when they conflict:
 - Rules say "Expo SDK 51 / React Navigation v6". Code uses **Expo SDK 54 / RN
   0.81 / React Navigation v7**.
 - Rules mandate "Reanimated 2 for animations" — Reanimated is **not** a
-  dependency; animations use `react-native-confetti-cannon` /
-  `react-native-draggable-flatlist` / core APIs.
+  dependency; animations use `react-native-confetti-cannon` / core APIs.
+  (`react-native-draggable-flatlist` was removed 2026-09-18 — zero imports,
+  and its required Reanimated peer was never installed.)
 - Rules say "use `interface`, never `type`" and "no `console.log`" — the codebase
   uses some `type` aliases and leaves `console.log`/`console.info` in stores,
   workers, and cron (used for diagnostics). Don't add gratuitous logs, but this

@@ -30,20 +30,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../theme/ThemeContext';
 import type { ColorTokens } from '../theme';
 import { useThumbnailUri } from '../utils/thumbnailCache';
+// aliased: react-native also exports a `Platform` value
+import { getPlatformMeta, type Platform as AppPlatform } from '../constants/platforms';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type Platform_ =
-  | 'instagram'
-  | 'youtube'
-  | 'tiktok'
-  | 'web'
-  | 'twitter'
-  | 'linkedin'
-  | 'spotify'
-  | 'other';
+// Platform metadata lives in constants/platforms (shared with the detail
+// screen and share handler); Platform_ stays exported for back-compat.
+export type Platform_ = AppPlatform;
 
 export type ContentType =
   | 'short_video'
@@ -120,26 +116,6 @@ const LIST_THUMB_W = 96;
 const LIST_CARD_H = 96;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Platform metadata
-// ─────────────────────────────────────────────────────────────────────────────
-interface PlatformInfo {
-  label: string;
-  icon: string;
-  gradientColors: [string, string];
-}
-
-const PLATFORM_META: Record<Platform_, PlatformInfo> = {
-  instagram: { label: 'Instagram', icon: '📷', gradientColors: ['#833AB4', '#FD1D1D'] },
-  youtube:   { label: 'YouTube',   icon: '▶️',  gradientColors: ['#FF0000', '#CC0000'] },
-  tiktok:    { label: 'TikTok',    icon: '🎵', gradientColors: ['#010101', '#69C9D0'] },
-  web:       { label: 'Web',       icon: '🌐', gradientColors: ['#1A1A2E', '#16213E'] },
-  twitter:   { label: 'X',         icon: '𝕏',  gradientColors: ['#14171A', '#657786'] },
-  linkedin:  { label: 'LinkedIn',  icon: '💼', gradientColors: ['#0077B5', '#005885'] },
-  spotify:   { label: 'Spotify',   icon: '🎧', gradientColors: ['#1DB954', '#191414'] },
-  other:     { label: 'Link',      icon: '🔗', gradientColors: ['#1A1A2E', '#666666'] },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -183,7 +159,7 @@ function getCardState(save: SaveData): 'unread' | 'done' | 'skipped' | 'processi
 
 /** Platform icon badge overlaid on the thumbnail (bottom-left) */
 function PlatformBadge({ platform, borderRadius }: { platform: Platform_; borderRadius: number }): React.JSX.Element {
-  const info = PLATFORM_META[platform];
+  const info = getPlatformMeta(platform);
   return (
     <View style={[styles.platformBadge, { borderRadius }]}>
       <Text style={styles.platformBadgeIcon}>{info.icon}</Text>
@@ -253,7 +229,7 @@ export function OshiCard({
   const { typography, spacing, borderRadius, shadows } = theme;
 
   const cardState = getCardState(save);
-  const platformInfo = PLATFORM_META[save.platform];
+  const platformInfo = getPlatformMeta(save.platform);
   const isGrid = viewMode === 'grid';
   const [menuVisible, setMenuVisible] = useState(false);
 
@@ -367,7 +343,7 @@ export function OshiCard({
         <View style={[styles.thumbContainer, thumbStyle]}>
           {showGradient ? (
             <LinearGradient
-              colors={platformInfo.gradientColors}
+              colors={platformInfo.gradient}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
               style={[StyleSheet.absoluteFillObject, { opacity: thumbnailOpacity }]}

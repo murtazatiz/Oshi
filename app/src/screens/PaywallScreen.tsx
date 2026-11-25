@@ -22,7 +22,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import type { PurchasesPackage } from 'react-native-purchases';
 
@@ -30,6 +30,8 @@ import { useTheme } from '../theme/ThemeContext';
 import { useSubscriptionStore } from '../store/subscriptionStore';
 import { PRODUCT_IDS } from '../services/purchases';
 import analytics from '../services/analytics';
+import type { PaywallTrigger } from '../services/paywall';
+import type { MainStackParamList } from '../navigation/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Feature comparison rows
@@ -46,12 +48,47 @@ const FEATURES: { label: string; free: string; pro: string }[] = [
   { label: 'Export library',         free: '—',        pro: 'CSV / JSON' },
 ];
 
+/** Headline per trigger — PRD §8.3: limit triggers show the paywall "with context". */
+const HEADLINES: Record<PaywallTrigger, { title: string; sub: string }> = {
+  save_limit: {
+    title: "You've used all 20 saves this month",
+    sub: 'Upgrade to Oshi Pro for unlimited saves — or wait for your limit to reset on the 1st.',
+  },
+  category_limit: {
+    title: "You've reached 3 custom categories",
+    sub: 'Upgrade to Oshi Pro to organise your library with unlimited categories.',
+  },
+  upsell_banner: {
+    title: 'Keep Pro after your trial',
+    sub: 'Unlimited saves and categories, a morning digest, and priority AI processing.',
+  },
+  downgrade_banner: {
+    title: 'Get everything back with Pro',
+    sub: 'Your saves and categories are all still here. Pro lifts the free-plan limits again.',
+  },
+  trial_expiry: {
+    title: 'Your Pro trial is ending',
+    sub: 'Keep unlimited saves, smart reminders, and priority AI processing.',
+  },
+  settings: {
+    title: 'Upgrade to Oshi Pro',
+    sub: 'Unlimited saves, smart reminders, and priority AI processing.',
+  },
+  direct: {
+    title: 'Upgrade to Oshi Pro',
+    sub: 'Unlimited saves, smart reminders, and priority AI processing.',
+  },
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function PaywallScreen(): React.JSX.Element {
   const navigation = useNavigation();
+  const route = useRoute<RouteProp<MainStackParamList, 'Paywall'>>();
+  const trigger: PaywallTrigger = route.params?.trigger ?? 'direct';
+  const headline = HEADLINES[trigger];
   const { colors, theme } = useTheme();
   const { spacing, borderRadius } = theme;
 
@@ -65,9 +102,9 @@ export default function PaywallScreen(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
-    analytics.paywallViewed({ trigger: 'direct' });
+    analytics.paywallViewed({ trigger });
     void refresh();
-  }, [refresh]);
+  }, [refresh, trigger]);
 
   // Auto-select annual by default
   useEffect(() => {
@@ -135,10 +172,8 @@ export default function PaywallScreen(): React.JSX.Element {
       >
         {/* Hero */}
         <Text style={[styles.heroEmoji]}>✦</Text>
-        <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>Upgrade to Oshi Pro</Text>
-        <Text style={[styles.heroSub, { color: colors.textSecondary }]}>
-          Unlimited saves, smart reminders, and priority AI processing.
-        </Text>
+        <Text style={[styles.heroTitle, { color: colors.textPrimary }]}>{headline.title}</Text>
+        <Text style={[styles.heroSub, { color: colors.textSecondary }]}>{headline.sub}</Text>
 
         {/* Trial callout */}
         <View style={[styles.trialBanner, { backgroundColor: colors.accent + '14', borderColor: colors.accent, borderRadius: borderRadius.sm }]}>

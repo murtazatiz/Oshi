@@ -10,6 +10,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useTheme } from '../../theme/ThemeContext';
 import { apiClient } from '../../services/apiClient';
+import analytics from '../../services/analytics';
+import { localToUtcTimetz } from '../../utils/reminderTime';
 
 // ─────────────────────────────────────────────
 // Types
@@ -43,10 +45,13 @@ function padMin(m: number): string {
   return String(m).padStart(2, '0');
 }
 
-/** Build the API TIMETZ string in UTC */
+/**
+ * Build the API TIMETZ string in UTC. The picker shows the device's local
+ * time; this previously stamped that local time "+00" without converting,
+ * so a 7 PM reminder in India was stored as 19:00 UTC and fired at 00:30.
+ */
 function toApiTime(hour: number, minute: number, period: Period): string {
-  const h = to24h(hour, period);
-  return `${String(h).padStart(2, '0')}:${padMin(minute)}:00+00`;
+  return localToUtcTimetz(to24h(hour, period), minute);
 }
 
 // ─────────────────────────────────────────────
@@ -159,6 +164,10 @@ export default function StepReminder({ onNext, onSkip }: Props): React.JSX.Eleme
         reminder_time: reminderTime,
         reminder_days: reminderDays,
       });
+      analytics.notificationReminderSet({
+        hour: to24h(HOURS[hourIdx]!, period),
+        days_count: reminderDays.length,
+      });
     } catch {
       // Non-fatal — preferences saved next time
     } finally {
@@ -168,10 +177,10 @@ export default function StepReminder({ onNext, onSkip }: Props): React.JSX.Eleme
   }
 
   async function handleSkip(): Promise<void> {
-    // Store the default (7 PM daily) silently
+    // Store the default (7 PM local, daily) silently
     try {
       await apiClient.patch('/notifications/settings', {
-        reminder_time: '19:00:00+00',
+        reminder_time: localToUtcTimetz(19, 0),
         reminder_days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
       });
     } catch {

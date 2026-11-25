@@ -37,11 +37,17 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { ParamListBase } from '@react-navigation/native';
 
-import { supabase } from '../services/supabase';
+import {
+  subscribeToSaveUpdates,
+  unsubscribeFromSaveUpdates,
+} from '../services/realtime';
+import { openPaywall } from '../services/paywall';
+import analytics from '../services/analytics';
+import { CategoryPickerSheet } from '../components/CategoryPickerSheet';
 import { useTheme } from '../theme/ThemeContext';
 import { useAuthStore } from '../store/authStore';
 import {
@@ -61,7 +67,7 @@ import { OshiEmptyState } from '../components/OshiEmptyState';
 import { CategoryTabs } from '../components/CategoryTabs';
 import { SortPicker } from '../components/SortPicker';
 import { UndoToast } from '../components/UndoToast';
-import type { MainStackParamList } from '../navigation/types';
+import type { LibraryStackParamList, MainStackParamList } from '../navigation/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -308,61 +314,6 @@ function MultiSelectBar({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CategoryPickerSheet — bottom sheet for "Move to Category" bulk action
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface CategoryPickerSheetProps {
-  visible: boolean;
-  categories: { id: string; name: string }[];
-  onSelect: (categoryId: string) => void;
-  onClose: () => void;
-}
-
-function CategoryPickerSheet({
-  visible,
-  categories,
-  onSelect,
-  onClose,
-}: CategoryPickerSheetProps): React.JSX.Element {
-  const { colors, theme } = useTheme();
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <View
-          style={[
-            styles.pickerSheet,
-            {
-              backgroundColor: colors.surface,
-              borderTopLeftRadius: theme.borderRadius.lg,
-              borderTopRightRadius: theme.borderRadius.lg,
-            },
-          ]}
-        >
-          <View style={styles.handleRow}>
-            <View style={[styles.handle, { backgroundColor: colors.border }]} />
-          </View>
-          <Text style={[styles.pickerTitle, { color: colors.textPrimary }]}>Move to Category</Text>
-          {categories.map((cat) => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[styles.pickerRow, { paddingVertical: theme.spacing.sm + 4, paddingHorizontal: theme.spacing.md }]}
-              onPress={() => {
-                onSelect(cat.id);
-                onClose();
-              }}
-              activeOpacity={0.65}
-            >
-              <Text style={[styles.pickerRowText, { color: colors.textPrimary }]}>{cat.name}</Text>
-            </TouchableOpacity>
-          ))}
-          <View style={{ height: theme.spacing.xl }} />
-        </View>
-      </Pressable>
-    </Modal>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // NotificationReaskModal — day-3 re-request (PRD §3.4.2)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -420,8 +371,12 @@ function NotificationReaskModal({
 // HomeScreen
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Module-level so it survives remounts within one app session. */
+let hasLoggedDowngradeBannerView = false;
+
 export default function HomeScreen(): React.JSX.Element {
   const navigation = useNavigation<NavProp>();
+  const route = useRoute<RouteProp<LibraryStackParamList, 'LibraryHome'>>();
   const { colors, theme } = useTheme();
   const { spacing, borderRadius } = theme;
   const userId = useAuthStore((s) => s.user?.id);
@@ -436,6 +391,9 @@ export default function HomeScreen(): React.JSX.Element {
   const notificationReaskDue = useSavesStore((s) => s.notificationReaskDue);
   const trialExpiryBannerDue = useSavesStore((s) => s.trialExpiryBannerDue);
   const trialBannerDismissed = useSavesStore((s) => s.trialBannerDismissed);
+  const upsellBannerDue = useSavesStore((s) => s.upsellBannerDue);
+  const downgradeBannerDue = useSavesStore((s) => s.downgradeBannerDue);
+  const downgradeBannerDismissed = useSavesStore((s) => s.downgradeBannerDismissed);
 
   const {
     fetchCategories,
@@ -464,6 +422,8 @@ export default function HomeScreen(): React.JSX.Element {
     updateSave,
     checkUserFlags,
     dismissTrialBanner,
+    dismissUpsellBanner,
+    dismissDowngradeBanner,
     loadSortPreference,
   } = useSavesActions();
 
@@ -477,7 +437,6 @@ export default function HomeScreen(): React.JSX.Element {
   const [localPlatformFilter, setLocalPlatformFilter] = useState<string[]>([]);
   const [localStatusFilter, setLocalStatusFilter] = useState<string[]>([]);
   const [isHeaderRefreshing, setIsHeaderRefreshing] = useState(false);
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const refreshSpinRef = useRef<RNAnimated.CompositeAnimation | null>(null);
   const refreshRotate = useRef(new RNAnimated.Value(0)).current;
 
@@ -557,6 +516,14 @@ export default function HomeScreen(): React.JSX.Element {
 
   // ── Auto-fetch on focus when saves array is empty ─────────────────────────
 
+  // One library_viewed per visit (store read directly so the effect doesn't
+  // re-fire as the list changes while the screen is focused)
+  useFocusEffect(
+    useCallback(() => {
+      analytics.libraryViewed({ save_count: useSavesStore.getState().allSaves.length });
+    }, []),
+  );
+
   useFocusEffect(
     useCallback(() => {
       if (saves.length === 0) {
@@ -568,54 +535,38 @@ export default function HomeScreen(): React.JSX.Element {
   // Day-3 notification re-ask — 2s delay after mount (PRD §3.4.2)
   useEffect(() => {
     if (!notificationReaskDue) return;
-    const timer = setTimeout(() => setReaskModalVisible(true), REASK_DELAY_MS);
+    const timer = setTimeout(() => {
+      setReaskModalVisible(true);
+      analytics.notificationReaskShown();
+    }, REASK_DELAY_MS);
     return () => clearTimeout(timer);
   }, [notificationReaskDue]);
 
   // ── Supabase Realtime subscription (API Contract §8) ──────────────────────
+  // services/realtime.ts owns the channel and routes rows into savesStore.
 
   useEffect(() => {
     if (!userId) return;
-
-    if (channelRef.current) {
-      void supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-
-    const channel = supabase
-      .channel('saves-updates')
-      .on(
-        'postgres_changes' as 'system',
-        { event: 'UPDATE', schema: 'public', table: 'saves' } as Record<string, string>,
-        (payload: { eventType?: string; new: Partial<SaveData> & { id: string; category_id?: string } }) => {
-          const state = useSavesStore.getState();
-          const newRow = payload.new;
-          const existing = state.allSaves.find((s) => s.id === newRow.id);
-          const processingComplete = newRow.processing_status === 'complete';
-          const newCategoryId = newRow.category?.id ?? newRow.category_id;
-          const categoryChanged =
-            existing && newCategoryId !== undefined && existing.category?.id !== newCategoryId;
-
-          // Update in-memory — filter auto-re-derives visible saves
-          state.updateSave(newRow);
-
-          // Refresh category counts when processing finishes or save moves categories
-          if (processingComplete || categoryChanged) {
-            void state.fetchCategories();
-          }
-        },
-      )
-      .subscribe();
-
-    channelRef.current = channel;
-
-    return () => {
-      if (channelRef.current) {
-        void supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
+    subscribeToSaveUpdates();
+    return () => unsubscribeFromSaveUpdates();
   }, [userId]);
+
+  // ── Deep link: oshi://library/:categorySlug (PRD §4) ──────────────────────
+  // Reminder pushes deep-link to a category; select the matching tab once
+  // categories are loaded. Slug formula mirrors the backend's
+  // slugifyCategoryName (lowercase, hyphens for spaces).
+
+  useEffect(() => {
+    const slug = route.params?.categorySlug;
+    if (!slug || categories.length === 0) return;
+    const target = categories.find(
+      (c) => c.name.toLowerCase().replace(/\s+/g, '-') === slug.toLowerCase(),
+    );
+    if (target && target.id !== activeCategoryId) {
+      setActiveCategory(target.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.params?.categorySlug, categories]);
 
   // ── Search — client-side filter, no API call ─────────────────────────────
 
@@ -730,12 +681,16 @@ export default function HomeScreen(): React.JSX.Element {
   );
 
   const handleSwipeDone = useCallback(
-    (save: SaveData) => void markDone(save),
+    (save: SaveData) => {
+      analytics.librarySwipeGestureUsed({ action: 'done' });
+      void markDone(save);
+    },
     [markDone],
   );
 
   const handleSwipeDelete = useCallback(
     (save: SaveData) => {
+      analytics.librarySwipeGestureUsed({ action: 'delete' });
       Alert.alert('Delete this save?', undefined, [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -772,6 +727,7 @@ export default function HomeScreen(): React.JSX.Element {
           await apiClient.patch(`/saves/${save.id}`, { category_id: categoryId });
           if (cat) {
             updateSave({ id: save.id, category: { id: cat.id, name: cat.name } });
+            analytics.saveCategoryChanged({ save_id: save.id, new_category: cat.name });
           }
           void fetchCategories();
         } catch {
@@ -801,6 +757,7 @@ export default function HomeScreen(): React.JSX.Element {
   // ── Notification re-ask ───────────────────────────────────────────────────
 
   function handleReaskEnable(): void {
+    analytics.notificationReaskAccepted();
     setReaskModalVisible(false);
     if (Platform.OS === 'ios') {
       void Linking.openURL('app-settings:');
@@ -864,6 +821,15 @@ export default function HomeScreen(): React.JSX.Element {
   // ── Render ────────────────────────────────────────────────────────────────
 
   const showTrialBanner = trialExpiryBannerDue && !trialBannerDismissed;
+  const showUpsellBanner = upsellBannerDue && !showTrialBanner;
+  const showDowngradeBanner = downgradeBannerDue && !downgradeBannerDismissed;
+
+  // downgrade_banner_viewed once per app session, not on every re-render
+  useEffect(() => {
+    if (!showDowngradeBanner || hasLoggedDowngradeBannerView) return;
+    hasLoggedDowngradeBannerView = true;
+    analytics.downgradeBannerViewed();
+  }, [showDowngradeBanner]);
 
   return (
     <SafeAreaView style={[styles.root, { backgroundColor: colors.background }]} edges={['top']}>
@@ -1029,13 +995,55 @@ export default function HomeScreen(): React.JSX.Element {
           </Text>
           <View style={styles.trialBannerActions}>
             <TouchableOpacity
-              onPress={() => navigation.navigate('MainTabs', { screen: 'SettingsTab', params: { screen: 'Subscription' } })}
+              onPress={() => openPaywall('trial_expiry')}
               style={[styles.trialUpgradeBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}
               accessibilityLabel="Upgrade now"
             >
               <Text style={styles.trialUpgradeText}>Upgrade Now</Text>
             </TouchableOpacity>
             <TouchableOpacity onPress={dismissTrialBanner} hitSlop={8} accessibilityLabel="Dismiss banner">
+              <Text style={[styles.trialDismiss, { color: colors.textMuted }]}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ── Day-5 soft upsell banner (PRD §8.3, trial users) ───────────── */}
+      {showUpsellBanner && (
+        <View style={[styles.trialBanner, { backgroundColor: colors.accent + '14' }]}>
+          <Text style={[styles.trialBannerText, { color: colors.textPrimary }]}>
+            Enjoying Oshi Pro? Keep it after your trial
+          </Text>
+          <View style={styles.trialBannerActions}>
+            <TouchableOpacity
+              onPress={() => openPaywall('upsell_banner')}
+              style={[styles.trialUpgradeBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}
+              accessibilityLabel="See Oshi Pro"
+            >
+              <Text style={styles.trialUpgradeText}>See Pro</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={dismissUpsellBanner} hitSlop={8} accessibilityLabel="Dismiss banner">
+              <Text style={[styles.trialDismiss, { color: colors.textMuted }]}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* ── Free-plan banner (PRD §3.7.4) — dismissible once per session ─ */}
+      {showDowngradeBanner && (
+        <View style={[styles.trialBanner, { backgroundColor: colors.accent + '14' }]}>
+          <Text style={[styles.trialBannerText, { color: colors.textPrimary }]}>
+            You're on the free plan — some features are limited. Upgrade to Pro.
+          </Text>
+          <View style={styles.trialBannerActions}>
+            <TouchableOpacity
+              onPress={() => openPaywall('downgrade_banner')}
+              style={[styles.trialUpgradeBtn, { backgroundColor: colors.accent, borderRadius: borderRadius.sm }]}
+              accessibilityLabel="Upgrade to Pro"
+            >
+              <Text style={styles.trialUpgradeText}>Upgrade</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={dismissDowngradeBanner} hitSlop={8} accessibilityLabel="Dismiss banner">
               <Text style={[styles.trialDismiss, { color: colors.textMuted }]}>✕</Text>
             </TouchableOpacity>
           </View>
@@ -1099,8 +1107,9 @@ export default function HomeScreen(): React.JSX.Element {
 
       <CategoryPickerSheet
         visible={categoryPickerVisible}
+        title={saveForCategoryEdit ? 'Change Category' : 'Move to Category'}
         categories={categories}
-        onSelect={(catId) => void handleCategoryPickerSelect(catId)}
+        onSelect={(cat) => void handleCategoryPickerSelect(cat.id)}
         onClose={handleCategoryPickerClose}
       />
 
@@ -1295,26 +1304,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'flex-end',
   },
-  pickerSheet: {
-    paddingTop: 8,
-  },
-  handleRow: {
-    alignItems: 'center',
-    paddingBottom: 8,
-  },
-  handle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-  },
-  pickerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  pickerRow: {},
-  pickerRowText: { fontSize: 16, fontWeight: '500' },
 
   // ── Notification re-ask modal ─────────────────────────────────────────────
   reaskCard: {

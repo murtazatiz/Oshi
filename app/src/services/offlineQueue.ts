@@ -103,10 +103,14 @@ export async function processQueue(): Promise<SyncResult> {
 
   for (const item of queue) {
     try {
-      await apiClient.post('/saves', {
-        url: item.url,
-        source_app: item.source_app,
-      });
+      // A queued save over the monthly limit stays queued and goes through
+      // after an upgrade or the 1st-of-month reset; the flush is background
+      // work, so it must not open the paywall.
+      await apiClient.post(
+        '/saves',
+        { url: item.url, source_app: item.source_app },
+        { skipPaywall: true },
+      );
       processed += 1;
     } catch {
       failed += 1;

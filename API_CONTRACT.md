@@ -31,13 +31,18 @@ POST /auth/reset-password
 Request: { email }
 Response 200: { message: 'Reset email sent' }
 Always returns 200 even if email not found (security: don't reveal whether email exists).
+POST /auth/update-password
+Request: { token, new_password }   — token from the oshi://auth/reset?token= deep link.
+Response 200: { message: 'Password updated successfully. Please sign in with your new password.' }
+Errors: 422 VALIDATION_ERROR when the token is invalid or expired.
+(Added 2026-09-18: this endpoint existed in the flow but was undocumented; the backend previously served the email step at /auth/forgot-password and the token step at /auth/reset-password, contradicting this contract — both now conform.)
 3. Saves Endpoints
 POST /saves
 Request:
 { "url": "https://www.instagram.com/reel/ABC123/", "source_app": "instagram" }
 Response 201:
 { "id": "uuid", "url": "https://www.instagram.com/reel/ABC123/",   "platform": "instagram", "processing_status": "pending",   "saved_at": "2026-02-14T19:30:00Z", "category": { "id": "uuid", "name": "Other" } }
-Backend immediately increments users.items_saved_this_month. If this exceeds 20 for free users, returns 403 SAVE_LIMIT_REACHED before creating the record.
+Free users who hold more than 3 custom categories (e.g. after a downgrade) get 403 CATEGORY_LIMIT_REACHED until they're back within the limit (PRD §3.7.4, added 2026-11-24). Backend immediately increments users.items_saved_this_month. If this exceeds 20 for free users, returns 403 SAVE_LIMIT_REACHED before creating the record.
 Duplicate check: if URL already exists for this user, return 200 with existing save + field 'duplicate': true.
 GET /saves
 Query parameters:
@@ -58,20 +63,35 @@ Setting status to 'done' automatically sets done_at = NOW(). Setting to 'skipped
 DELETE /saves/:id
 Response 204: No Content.
 Soft delete: sets saves.deleted_at = NOW(). Record excluded from all GET queries. Purged after 7 days by cron.
+POST /saves/:id/restore
+Response 200: full restored save object.
+Clears deleted_at on a soft-deleted save (the undo path). Status and done/skipped timestamps are untouched by delete, so the save comes back exactly as it was. 404 if the save is not deleted, not owned, or already purged. (Added 2026-09-18 — undo-after-delete previously had no working server path, since PATCH filters deleted rows.)
 4. Categories Endpoints
 GET /categories
 Response 200:
 { "categories": [     { "id": "uuid", "name": "Business", "emoji": "💼",       "sort_order": 1, "is_system_default": true,       "unread_count": 12, "total_count": 34,       "reminder_override_time": null }   ] }
 POST /categories
 Request: { name, emoji?, sort_order? }
-Free tier: returns 403 CATEGORY_LIMIT_REACHED if user already has 3 categories.
+Free tier: returns 403 CATEGORY_LIMIT_REACHED if user already has 3 custom categories (is_system_default=false). The 11 categories seeded at signup are is_system_default=true and never count toward the limit. (Clarified 2026-11-23: counting all categories would block every free user, since each starts with 11.)
 Response 201: new category object.
+PATCH /categories/:id
+Request: { name?, emoji?, reminder_override_time?, sort_order? }. reminder_override_time is a Pro per-category reminder (PRD §3.7.2) in UTC "HH:MM:SS+00"; null clears it. Setting one on the free plan returns 403 FORBIDDEN; clearing is always allowed. Response 200: the category with real unread/total counts. (Validation and Pro rule added 2026-11-24.)
 DELETE /categories/:id
 Backend: finds the user's 'Other' category. Moves all saves from deleted category to Other. Then deletes the category. Response 204.
 5. Users Endpoints
 GET /users/me
 Response 200:
-{ "id": "uuid", "email": "user@example.com", "display_name": "Murtaza",   "avatar_url": "https://supabase.co/storage/v1/object/sign/avatars/uuid/profile.jpg?token=...",   "subscription_status": "pro", "subscription_expires_at": "2026-03-14T00:00:00Z",   "streak_count": 7, "items_saved_this_month": 45,   "notification_permission": "granted", "reminder_time": "19:00:00+00",   "reminder_days": ["mon","tue","wed","thu","fri","sat","sun"] }
+{ "id": "uuid", "email": "user@example.com", "display_name": "Murtaza",   "avatar_url": "https://supabase.co/storage/v1/object/sign/avatars/uuid/profile.jpg?token=...",   "subscription_status": "pro", "subscription_expires_at": "2026-03-14T00:00:00Z",   "streak_count": 7, "items_saved_this_month": 45,   "notification_permission": "granted", "reminder_time": "19:00:00+00",   "reminder_days": ["mon","tue","wed","thu","fri","sat","sun"],   "morning_digest": false }
+Computed flags, present only when true: notification_reask_due, trial_expiry_banner_due, upsell_banner_due (trial users whose account is ≥ 5 days old — PRD §8.3 day-5 soft upsell; the app snoozes it for 7 days on dismiss), downgrade_banner_due (free plan — PRD §3.7.4 banner; the app dismisses it per session). (Audiences revised 2026-11-24, ADR-0023.) (morning_digest and upsell_banner_due added 2026-11-23.)
+Account pending deletion (PRD §3.7.5): account_deleted_at and purge_after (ISO timestamps) are present while the account is soft-deleted but still restorable. (Added 2026-11-24.)
+PATCH /users/me also accepts analytics_opt_out (boolean): mirrors the app's analytics toggle so server-side events respect it (added 2026-11-24, ADR-0024).
+POST /users/me/restore
+Response 200: the user object. Clears deleted_at for an account pending deletion, inside the 30-day window. 404 NOT_FOUND if nothing is pending or the window has passed. (Added 2026-11-24.)
+PATCH /notifications/settings
+Request: { reminder_time?, reminder_days?, morning_digest? }   — at least one field. reminder_time is UTC "HH:MM:SS+00"; reminder_days is a non-empty array of "mon"…"sun".
+Response 200: { reminder_time, reminder_days, morning_digest }
+morning_digest is Pro-only: setting it to true on the free plan returns 403 FORBIDDEN. When on, a push summarising yesterday's saves is sent at 08:00 in the user's timezone (none if nothing was saved). (morning_digest added 2026-11-23; PRD §6 lists this endpoint.)
+Push notification data (all pushes, added 2026-11-24): { url, notification_log_id, notification_type }. On tap the app opens url as a deep link and sends notification_log_id to POST /notifications/log-open { notification_log_id }.
 POST /users/avatar
 Request: multipart/form-data with field 'avatar' containing the image file (JPEG or PNG, max 500KB).
 Backend: uploads to Supabase Storage at path avatars/[user_id]/profile.jpg. Generates signed URL (expires 1 year). Updates users.avatar_url. Returns { avatar_url: '...' }.

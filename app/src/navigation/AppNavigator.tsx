@@ -1,19 +1,22 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Platform, StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import {
-  createNavigationContainerRef,
+  DarkTheme,
+  DefaultTheme,
   NavigationContainer,
+  type Theme as NavigationTheme,
   type LinkingOptions,
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { Session } from '@supabase/supabase-js';
 
-import { supabase } from '../lib/supabase';
-import { theme } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
+import { navigationRef } from './navigationRef';
+import { getLaunchNotificationUrl, subscribeToNotificationUrls } from '../services/notificationTaps';
 import { useOnboardingStore } from '../store/onboardingStore';
+import { useAuthStore } from '../store/authStore';
 
 import type {
   AuthStackParamList,
@@ -64,7 +67,7 @@ const SettingsStack = createNativeStackNavigator<SettingsStackParamList>();
 // Navigation ref — exported so App.tsx can navigate outside React tree
 // and so deep links can be handled on cold start per PRD §4
 // ─────────────────────────────────────────────────────────────────────────────
-export const navigationRef = createNavigationContainerRef<RootStackParamList>();
+export { navigationRef };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Deep link configuration
@@ -121,6 +124,24 @@ const linking: LinkingOptions<RootStackParamList> = {
     },
   },
   /**
+   * Push notification taps carry an oshi:// URL (e.g. a reminder's category
+   * tab). Feeding them through the linking config means a tap that cold-
+   * starts the app still routes once navigation mounts.
+   */
+  async getInitialURL() {
+    const url = await Linking.getInitialURL();
+    if (url) return url;
+    return getLaunchNotificationUrl();
+  },
+  subscribe(listener) {
+    const linkSubscription = Linking.addEventListener('url', ({ url }) => listener(url));
+    const unsubscribeNotifications = subscribeToNotificationUrls(listener);
+    return () => {
+      linkSubscription.remove();
+      unsubscribeNotifications();
+    };
+  },
+  /**
    * oshi://notifications/enable deep links to the OS notification settings
    * for Oshi (PRD §4). This URL does not map to an in-app screen, so we
    * intercept it here and open the system settings instead.
@@ -138,55 +159,16 @@ const linking: LinkingOptions<RootStackParamList> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auth state hook
-// PRD §3.5.3: call supabase.auth.getSession() on app open.
-// On 401: one silent refresh → if failed, clear session and redirect to Login.
-// Session is persisted in SecureStore via the adapter in src/lib/supabase.ts.
-// ─────────────────────────────────────────────────────────────────────────────
-function useAuthSession(): { session: Session | null; isLoading: boolean } {
-  const [session, setSession] = useState<Session | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    // Restore session from SecureStore on mount
-    supabase.auth
-      .getSession()
-      .then(({ data }) => {
-        setSession(data.session);
-      })
-      .catch(() => {
-        setSession(null);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
-
-    // Keep session in sync with Supabase auth events (sign in, sign out,
-    // token refresh, password recovery, etc.)
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, updatedSession) => {
-      setSession(updatedSession);
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  return { session, isLoading };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Auth Stack navigator
 // ─────────────────────────────────────────────────────────────────────────────
 function AuthNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <AuthStack.Navigator
       screenOptions={{
         headerShown: false,
         animation: 'slide_from_right',
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <AuthStack.Screen name="Onboarding" component={OnboardingScreen} />
@@ -203,11 +185,12 @@ function AuthNavigator(): React.JSX.Element {
 // Allows the Library tab to push additional screens while keeping the tab bar.
 // ─────────────────────────────────────────────────────────────────────────────
 function LibraryNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <LibraryStack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <LibraryStack.Screen name="LibraryHome" component={LibraryScreen} />
@@ -220,11 +203,12 @@ function LibraryNavigator(): React.JSX.Element {
 // Allows deep-linking to Reminders and Subscription sub-screens (PRD §4).
 // ─────────────────────────────────────────────────────────────────────────────
 function SettingsNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <SettingsStack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <SettingsStack.Screen name="SettingsHome" component={SettingsScreen} />
@@ -246,6 +230,7 @@ function SettingsNavigator(): React.JSX.Element {
 // clipped by or overlapping the phone's own nav gestures.
 // ─────────────────────────────────────────────────────────────────────────────
 function MainTabNavigator(): React.JSX.Element {
+  const { colors, theme } = useTheme();
   const insets = useSafeAreaInsets();
 
   // On iOS the home indicator is included in the inset (≈34px on Face ID devices).
@@ -260,11 +245,11 @@ function MainTabNavigator(): React.JSX.Element {
     <MainTab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: theme.colors.accent,
-        tabBarInactiveTintColor: theme.colors.textMuted,
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: {
-          backgroundColor: theme.colors.surface,
-          borderTopColor: theme.colors.border,
+          backgroundColor: colors.surface,
+          borderTopColor: colors.border,
           borderTopWidth: StyleSheet.hairlineWidth,
           height: tabBarHeight,
           paddingBottom: bottomPad,
@@ -324,14 +309,7 @@ function TabIcon({
 }): React.JSX.Element {
   return (
     <View style={styles.tabIconContainer}>
-      {/* eslint-disable-next-line react-native/no-inline-styles */}
-      <React.Fragment>
-        {React.createElement(
-          require('react-native').Text,
-          { style: { fontSize: size, color } },
-          symbol,
-        )}
-      </React.Fragment>
+      <Text style={{ fontSize: size, color }}>{symbol}</Text>
     </View>
   );
 }
@@ -341,11 +319,12 @@ function TabIcon({
 // Hosts the tab navigator + ContentDetail modal sheet (PRD §3.6)
 // ─────────────────────────────────────────────────────────────────────────────
 function MainNavigator(): React.JSX.Element {
+  const { colors } = useTheme();
   return (
     <MainStack.Navigator
       screenOptions={{
         headerShown: false,
-        contentStyle: { backgroundColor: theme.colors.background },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
       <MainStack.Screen name="MainTabs" component={MainTabNavigator} />
@@ -395,7 +374,14 @@ function MainNavigator(): React.JSX.Element {
 // until markComplete() is called at the end of step 9.
 // ─────────────────────────────────────────────────────────────────────────────
 function RootNavigator(): React.JSX.Element {
-  const { session, isLoading: sessionLoading } = useAuthSession();
+  const { colors } = useTheme();
+  // Session state comes from authStore — App.tsx's AuthInitialiser calls
+  // initialise() on mount (getSession + onAuthStateChange). This navigator
+  // previously ran its own parallel getSession/listener pair, giving the app
+  // two competing sources of session truth.
+  const session = useAuthStore((s) => s.session);
+  const isInitialised = useAuthStore((s) => s.isInitialised);
+  const sessionLoading = !isInitialised;
 
   const isOnboardingComplete = useOnboardingStore((s) => s.isComplete);
   const isOnboardingLoaded = useOnboardingStore((s) => s.isLoaded);
@@ -410,8 +396,8 @@ function RootNavigator(): React.JSX.Element {
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.accent} />
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
@@ -438,10 +424,28 @@ function RootNavigator(): React.JSX.Element {
 //   NavigationContainer — React Navigation root with deep link config
 // ─────────────────────────────────────────────────────────────────────────────
 export default function AppNavigator(): React.JSX.Element {
+  const { colors, isDark } = useTheme();
+  // Container theme drives the backdrop React Navigation paints behind
+  // screens during transitions; mirror the app's light/dark tokens onto it.
+  const navigationTheme = useMemo<NavigationTheme>(() => {
+    const base = isDark ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: {
+        ...base.colors,
+        primary: colors.accent,
+        background: colors.background,
+        card: colors.surface,
+        text: colors.textPrimary,
+        border: colors.border,
+      },
+    };
+  }, [colors, isDark]);
+
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <NavigationContainer ref={navigationRef} linking={linking}>
+        <NavigationContainer ref={navigationRef} linking={linking} theme={navigationTheme}>
           <RootNavigator />
         </NavigationContainer>
       </SafeAreaProvider>
@@ -457,7 +461,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.colors.background,
   },
   tabIconContainer: {
     alignItems: 'center',

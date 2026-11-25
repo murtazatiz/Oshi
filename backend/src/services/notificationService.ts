@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { prisma } from '../lib/prisma';
+import { trackServerEvent } from './analytics';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Expo Push API — PRD §5.1 ("Push Notifications: Expo Push Notifications")
@@ -10,6 +11,87 @@ import { prisma } from '../lib/prisma';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const EXPO_PUSH_ENDPOINT = 'https://exp.host/--/api/v2/push/send';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared reminder helpers — this module owns the "which category do we nudge
+// about" semantics. The daily-reminder cron and the in-app reminder route
+// previously each carried their own copy of the day-name table, the slug
+// formula, and the top-unread-category query.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Day names as stored in users.reminder_days, indexed by Date#getUTCDay(). */
+export const UTC_DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+/** category_slug per PRD §4: lowercase, hyphens replacing spaces. */
+export function slugifyCategoryName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, '-');
+}
+
+export interface TopUnreadCategory {
+  categoryId: string | null;
+  name: string;
+  emoji: string;
+  unreadCount: number;
+}
+
+/**
+ * The category with the most unread saves for a user, with display info
+ * resolved ("Other"/📌 when the top saves are uncategorised).
+ * Returns null when the user has no unread saves at all.
+ */
+export interface ReminderScope {
+  /** Only consider this category (a Pro per-category reminder) */
+  onlyCategoryId?: string;
+  /**
+   * Skip categories that have their own reminder time (Pro users' daily
+   * reminder) so a category isn't nudged twice a day.
+   */
+  excludeOverridden?: boolean;
+}
+
+export async function getTopUnreadCategory(
+  userId: string,
+  scope: ReminderScope = {},
+): Promise<TopUnreadCategory | null> {
+  const categoryUnreadCounts = await prisma.save.groupBy({
+    by: ['categoryId'],
+    where: {
+      userId,
+      status: 'unread',
+      deletedAt: null,
+      ...(scope.onlyCategoryId !== undefined ? { categoryId: scope.onlyCategoryId } : {}),
+      ...(scope.excludeOverridden === true
+        ? { OR: [{ categoryId: null }, { category: { reminderOverrideTime: null } }] }
+        : {}),
+    },
+    _count: { id: true },
+    orderBy: { _count: { id: 'desc' } },
+    take: 1,
+  });
+
+  const topEntry = categoryUnreadCounts[0];
+  if (!topEntry || topEntry._count.id === 0) return null;
+
+  let name = 'Other';
+  let emoji = '📌';
+  if (topEntry.categoryId !== null) {
+    const cat = await prisma.category.findUnique({
+      where: { id: topEntry.categoryId },
+      select: { name: true, emoji: true },
+    });
+    if (cat) {
+      name = cat.name;
+      emoji = cat.emoji;
+    }
+  }
+
+  return {
+    categoryId: topEntry.categoryId,
+    name,
+    emoji,
+    unreadCount: topEntry._count.id,
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -42,6 +124,9 @@ export interface NotificationPayload {
   deepLinkUrl?: string;
   /** Optional thumbnail for rich notifications (PRD §3.4.1) */
   thumbnailUrl?: string;
+  /** notification_logs row id; the app echoes it to POST /notifications/log-open on tap */
+  notificationLogId?: string;
+  notificationType?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,9 +154,11 @@ export async function sendPushNotification(
     sound: 'default',
   };
 
-  if (payload.deepLinkUrl) {
-    message.data = { url: payload.deepLinkUrl };
-  }
+  const data: Record<string, string> = {};
+  if (payload.deepLinkUrl) data.url = payload.deepLinkUrl;
+  if (payload.notificationLogId) data.notification_log_id = payload.notificationLogId;
+  if (payload.notificationType) data.notification_type = payload.notificationType;
+  if (Object.keys(data).length > 0) message.data = data;
 
   if (payload.thumbnailUrl) {
     message.richContent = { image: payload.thumbnailUrl };
@@ -147,6 +234,32 @@ export async function logNotification(opts: {
   return log.id;
 }
 
+/**
+ * Send a push and record it in notification_logs. The log row is written
+ * first so the push can carry its id: when the user taps the notification,
+ * the app sends that id to POST /notifications/log-open (PRD §3.4 open
+ * tracking). If Expo rejects the push, the row is removed again so open
+ * rates only count delivered pushes.
+ */
+async function sendLoggedPush(
+  payload: NotificationPayload,
+  log: Parameters<typeof logNotification>[0],
+): Promise<void> {
+  const logId = await logNotification(log);
+  const sent = await sendPushNotification({
+    ...payload,
+    notificationLogId: logId,
+    notificationType: log.notificationType,
+  });
+  if (!sent) {
+    await prisma.notificationLog.delete({ where: { id: logId } }).catch(() => {
+      // Already gone — nothing to clean up
+    });
+    return;
+  }
+  void trackServerEvent(log.userId, 'notification_sent', { notification_type: log.notificationType });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain-specific senders
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,8 +291,7 @@ export async function sendDailyReminder(opts: {
       ? `${topSaveTitle} — and ${othersCount} more ${categoryName} save${othersCount === 1 ? '' : 's'}.`
       : topSaveTitle;
 
-  // category_slug: lowercase, hyphens replacing spaces
-  const categorySlug = categoryName.toLowerCase().replace(/\s+/g, '-');
+  const categorySlug = slugifyCategoryName(categoryName);
 
   // Build push payload — only include thumbnailUrl when it's a non-null string
   // (exactOptionalPropertyTypes: optional properties cannot be set to undefined)
@@ -191,16 +303,38 @@ export async function sendDailyReminder(opts: {
   };
   if (opts.thumbnailUrl) pushPayload.thumbnailUrl = opts.thumbnailUrl;
 
-  const sent = await sendPushNotification(pushPayload);
+  await sendLoggedPush(pushPayload, {
+    userId,
+    notificationType: 'daily_reminder',
+    categoryId: opts.categoryId,
+    itemCount: unreadCount,
+  });
+}
 
-  if (sent) {
-    await logNotification({
-      userId,
-      notificationType: 'daily_reminder',
-      categoryId: opts.categoryId,
-      itemCount: unreadCount,
-    });
-  }
+/**
+ * Composes and sends the Pro Morning Digest push (PRD §3.7.2): a brief
+ * summary of what the user saved yesterday, at 8 AM in their timezone.
+ * Callers skip users who saved nothing — an empty digest is never sent.
+ */
+export async function sendMorningDigest(opts: {
+  userId: string;
+  token: string;
+  savedYesterday: number;
+  topSaveTitle: string | null;
+}): Promise<void> {
+  const { userId, token, savedYesterday, topSaveTitle } = opts;
+
+  const body =
+    topSaveTitle === null
+      ? `You saved ${savedYesterday} item${savedYesterday === 1 ? '' : 's'} yesterday.`
+      : savedYesterday === 1
+        ? `Yesterday you saved "${topSaveTitle}".`
+        : `Yesterday you saved ${savedYesterday} items — including "${topSaveTitle}".`;
+
+  await sendLoggedPush(
+    { token, title: 'Your morning digest ☀️', body, deepLinkUrl: 'oshi://library' },
+    { userId, notificationType: 'morning_digest', itemCount: savedYesterday },
+  );
 }
 
 /**
@@ -211,19 +345,15 @@ export async function sendTrialExpiryWarning(opts: {
   userId: string;
   token: string;
 }): Promise<void> {
-  const sent = await sendPushNotification({
-    token: opts.token,
-    title: 'Your Oshi Pro trial ends tomorrow',
-    body: 'Keep unlimited saves and smart reminders.',
-    deepLinkUrl: 'oshi://settings/subscription',
-  });
-
-  if (sent) {
-    await logNotification({
-      userId: opts.userId,
-      notificationType: 'trial_expiry_warning',
-    });
-  }
+  await sendLoggedPush(
+    {
+      token: opts.token,
+      title: 'Your Oshi Pro trial ends tomorrow',
+      body: 'Keep unlimited saves and smart reminders.',
+      deepLinkUrl: 'oshi://settings/subscription',
+    },
+    { userId: opts.userId, notificationType: 'trial_expiry_warning' },
+  );
 }
 
 /**
@@ -245,17 +375,13 @@ export async function sendTrialExpiryDay(opts: {
     data: { trialExpiryBannerDue: true },
   });
 
-  const sent = await sendPushNotification({
-    token: opts.token,
-    title: 'Your Oshi Pro trial ends today',
-    body: "Upgrade to keep unlimited saves and smart reminders.",
-    deepLinkUrl: 'oshi://settings/subscription',
-  });
-
-  if (sent) {
-    await logNotification({
-      userId: opts.userId,
-      notificationType: 'trial_expiry_day',
-    });
-  }
+  await sendLoggedPush(
+    {
+      token: opts.token,
+      title: 'Your Oshi Pro trial ends today',
+      body: 'Upgrade to keep unlimited saves and smart reminders.',
+      deepLinkUrl: 'oshi://settings/subscription',
+    },
+    { userId: opts.userId, notificationType: 'trial_expiry_day' },
+  );
 }

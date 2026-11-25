@@ -9,6 +9,8 @@ import {
   getSortedSaveIds,
   invalidateSmartSortCache,
 } from '../services/smartSortService';
+import { detectPlatform } from '../services/platform';
+import { FREE_CUSTOM_CATEGORY_LIMIT, FREE_MONTHLY_SAVE_LIMIT } from '../constants/limits';
 import type { Prisma } from '@prisma/client';
 
 const router = Router();
@@ -56,26 +58,21 @@ type SaveWithCategory = Prisma.SaveGetPayload<{ select: typeof saveSelect }>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Detect platform from URL hostname.
- * facebook.com/fb.com → facebook, linkedin.com → linkedin, twitter.com/x.com → twitter;
- * these are checked before the generic "web" fallback.
- * Kept local to avoid importing the full metadataService bundle in this route —
- * the BullMQ worker does the authoritative detection after the job is queued.
+ * Build the case-insensitive search filter shared by both sort paths in
+ * GET /saves. Searches title, summary, user_note, creator_name.
+ * Tags (JSONB array) full-text search requires a GIN index + $queryRaw;
+ * it is not included here to keep the query in Prisma's type-safe layer.
  */
-function detectPlatformFromUrl(url: string): string {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    if (/youtube\.com|youtu\.be/.test(hostname)) return 'youtube';
-    if (hostname.includes('instagram.com')) return 'instagram';
-    if (hostname.includes('tiktok.com')) return 'tiktok';
-    if (hostname.includes('twitter.com') || hostname.includes('x.com')) return 'twitter';
-    if (hostname.includes('linkedin.com')) return 'linkedin';
-    if (hostname.includes('facebook.com') || hostname.includes('fb.com') || hostname.includes('fb.watch') || hostname.includes('fb.me')) return 'facebook';
-    if (hostname.includes('open.spotify.com')) return 'spotify';
-    return 'web';
-  } catch {
-    return 'other';
-  }
+function buildSearchWhere(search: string | undefined): Prisma.SaveWhereInput {
+  if (search === undefined || search.length === 0) return {};
+  return {
+    OR: [
+      { title: { contains: search, mode: 'insensitive' as const } },
+      { summary: { contains: search, mode: 'insensitive' as const } },
+      { userNote: { contains: search, mode: 'insensitive' as const } },
+      { creatorName: { contains: search, mode: 'insensitive' as const } },
+    ],
+  };
 }
 
 /**
@@ -192,24 +189,13 @@ router.get(
       const userId = req.userId;
 
       // ── Base WHERE clause (applied to all sort modes) ─────────────────────
+      const searchWhere = buildSearchWhere(search);
       const baseWhere: Prisma.SaveWhereInput = {
         userId,
         deletedAt: null,
         ...(category_id !== undefined ? { categoryId: category_id } : {}),
         ...(status !== undefined ? { status } : {}),
-        // Search across title, summary, user_note, creator_name.
-        // Tags (JSONB array) full-text search requires a GIN index + $queryRaw;
-        // it is not included here to keep the query in Prisma's type-safe layer.
-        ...(search !== undefined && search.length > 0
-          ? {
-              OR: [
-                { title: { contains: search, mode: 'insensitive' as const } },
-                { summary: { contains: search, mode: 'insensitive' as const } },
-                { userNote: { contains: search, mode: 'insensitive' as const } },
-                { creatorName: { contains: search, mode: 'insensitive' as const } },
-              ],
-            }
-          : {}),
+        ...searchWhere,
       };
 
       // ── AI Recommended sort (PRD §3.2.2) ─────────────────────────────────
@@ -250,16 +236,7 @@ router.get(
               // handled by the service not including deleted saves in the cache)
               deletedAt: null,
               ...(status !== undefined ? { status } : {}),
-              ...(search !== undefined && search.length > 0
-                ? {
-                    OR: [
-                      { title: { contains: search, mode: 'insensitive' as const } },
-                      { summary: { contains: search, mode: 'insensitive' as const } },
-                      { userNote: { contains: search, mode: 'insensitive' as const } },
-                      { creatorName: { contains: search, mode: 'insensitive' as const } },
-                    ],
-                  }
-                : {}),
+              ...searchWhere,
             },
             select: saveSelect,
           }),
@@ -374,9 +351,30 @@ router.post(
         user.subscriptionStatus === 'pro' || user.subscriptionStatus === 'trial';
 
       // ── Free tier save limit — PRD §8.1 (20 saves/month) ─────────────────
-      if (!isPro && user.itemsSavedThisMonth >= 20) {
+      if (!isPro && user.itemsSavedThisMonth >= FREE_MONTHLY_SAVE_LIMIT) {
         next(Errors.saveLimitReached());
         return;
+      }
+
+      // ── Downgraded with too many categories — PRD §3.7.4 ──────────────────
+      // A user who created more than 3 custom categories while on Pro keeps
+      // them all after downgrading, but can't add new saves until they're
+      // back within the free limit (or upgrade). Seeded defaults don't count.
+      if (!isPro) {
+        const customCategoryCount = await prisma.category.count({
+          where: { userId, isSystemDefault: false },
+        });
+        if (customCategoryCount > FREE_CUSTOM_CATEGORY_LIMIT) {
+          next(
+            new AppError(
+              'CATEGORY_LIMIT_REACHED',
+              `The free plan allows ${FREE_CUSTOM_CATEGORY_LIMIT} custom categories and you have ${customCategoryCount}. ` +
+                'Delete some, or upgrade to Oshi Pro, to keep saving.',
+              403,
+            ),
+          );
+          return;
+        }
       }
 
       // ── Duplicate URL check — API contract §3 ─────────────────────────────
@@ -390,7 +388,8 @@ router.post(
       }
 
       // ── Detect platform for the immediate response ─────────────────────────
-      const platform = detectPlatformFromUrl(url);
+      // (shared module; the worker re-detects authoritatively during metadata fetch)
+      const platform = detectPlatform(url);
 
       // ── Default category: 'Other' (seeded at signup for every user) ───────
       const otherCategory = await prisma.category.findFirst({
@@ -482,10 +481,11 @@ router.patch(
       const saveId = req.params['id'] as string;
       const { status, category_id, user_note, manual_sort_order } = parsed.data;
 
-      // Verify ownership
+      // Verify ownership — categoryId doubles as the OLD category for cache
+      // invalidation below, so no second pre-update fetch is needed.
       const existing = await prisma.save.findFirst({
         where: { id: saveId, userId: req.userId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, categoryId: true },
       });
       if (!existing) {
         next(Errors.notFound('Save'));
@@ -533,13 +533,6 @@ router.patch(
       if (user_note !== undefined) data.userNote = user_note;
       if (manual_sort_order !== undefined) data.manualSortOrder = manual_sort_order;
 
-      // Fetch the save before updating so we know the OLD category for cache
-      // invalidation in case the category is being changed.
-      const beforeUpdate = await prisma.save.findUnique({
-        where: { id: saveId },
-        select: { categoryId: true },
-      });
-
       const updated = await prisma.save.update({
         where: { id: saveId },
         data,
@@ -559,7 +552,7 @@ router.patch(
         // category-specific caches are cleared.
         await invalidateSmartSortCache(
           req.userId,
-          beforeUpdate?.categoryId,   // old category
+          existing.categoryId,        // old category
           updated.categoryId,         // new category (may be same)
         );
       }
@@ -575,7 +568,7 @@ router.patch(
 // DELETE /saves/:id — soft delete (sets deleted_at = NOW())
 //
 // Record is excluded from all GET queries immediately.
-// Permanently purged after 7 days by a nightly cron job.
+// Permanently purged after 7 days by the nightly purge (services/purgeService.ts).
 // ─────────────────────────────────────────────────────────────────────────────
 router.delete(
   '/:id',
@@ -585,7 +578,7 @@ router.delete(
 
       const existing = await prisma.save.findFirst({
         where: { id: saveId, userId: req.userId, deletedAt: null },
-        select: { id: true },
+        select: { id: true, categoryId: true },
       });
       if (!existing) {
         next(Errors.notFound('Save'));
@@ -597,7 +590,54 @@ router.delete(
         data: { deletedAt: new Date() },
       });
 
+      // ── Invalidate smart sort cache (PRD §3.2.2) ──────────────────────────
+      // A deleted save changes the ranking exactly like a status change does;
+      // without this, the cached order references the deleted ID for up to 1h
+      // (POST and PATCH already invalidate — DELETE was the missing third leg).
+      await invalidateSmartSortCache(req.userId, existing.categoryId);
+
       res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /saves/:id/restore — undo a soft delete
+//
+// Clears deleted_at on a save the user soft-deleted (the undo toast's
+// "deleted" path). Status and done/skipped timestamps were untouched by the
+// delete, so clearing the flag restores the save exactly as it was.
+// A PATCH cannot do this — every other route (correctly) filters
+// deletedAt: null, which is why undo-after-delete used to 404.
+// 404 when the save doesn't exist, isn't deleted, or was already purged.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post(
+  '/:id/restore',
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const saveId = req.params['id'] as string;
+
+      const deleted = await prisma.save.findFirst({
+        where: { id: saveId, userId: req.userId, deletedAt: { not: null } },
+        select: { id: true, categoryId: true },
+      });
+      if (!deleted) {
+        next(Errors.notFound('Save'));
+        return;
+      }
+
+      const restored = await prisma.save.update({
+        where: { id: saveId },
+        data: { deletedAt: null },
+        select: saveSelect,
+      });
+
+      // Restoring re-adds the save to rankings — same contract as DELETE
+      await invalidateSmartSortCache(req.userId, deleted.categoryId);
+
+      res.json(formatSave(restored));
     } catch (err) {
       next(err);
     }

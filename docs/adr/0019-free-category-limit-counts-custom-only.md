@@ -1,6 +1,6 @@
 # ADR-0019 — The free-tier category limit counts custom categories only
 
-**Status:** Accepted (pending product confirmation of PRD wording) · **Decided:** 2026-11-23
+**Status:** Accepted · **Decided:** 2026-11-23 · **Confirmed by product owner:** 2026-11-25 (PRD §3.7.3, §3.7.4 and §8.1 updated to match)
 
 ## Context
 PRD §8.1 says free users get "3 active categories maximum", but §3.2.1 seeds 11 default categories for every user and §8.2 promises Pro "unlimited **custom** categories". Read literally, §8.1 can never be satisfied: every user starts at 11. The code took the literal reading (`count(all) >= 3`), so no free user could ever create a category. `CLAUDE.md` and `context.md` already stated the rule as "3 custom categories".

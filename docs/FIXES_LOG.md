@@ -75,6 +75,18 @@ Entry template:
 
 ---
 
+## 2026-11-25 — Product confirmations (01:55 UTC)
+
+The product owner confirmed all three readings that had been flagged, and the PRD now states them directly:
+
+- **ADR-0019, custom-category limit:** free users get 3 custom categories on top of the 11 defaults. PRD §3.7.3 and §8.1 updated.
+- **ADR-0023, banner audiences:** the day-5 upsell targets trial users; free-plan users see the §3.7.4 banner instead. PRD §8.3 updated.
+- **FIX-20261124-09, downgraded save block:** a free user holding more than 3 custom categories can't add saves until they're back within the limit. PRD §3.7.4 updated ("active" became "custom").
+
+No code changes; the implementation already matched. The "flag for product" notes on FIX-20261123-02 and FIX-20261124-09 are resolved by this entry.
+
+---
+
 ## 2026-11-24, cutover tooling (16:30–16:50 UTC)
 
 ### FIX-20261124-11 — The post-merge steps had no runbook; P0 count mis-tallied
@@ -397,5 +409,6 @@ The remaining items from the 2026-09-18 architecture review's backlog that didn'
 | 1.3 | 2026-11-23 04:23 | Reminders screen, Morning Digest persistence + sender, day-5 upsell banner (FIX-20261123-03…05). |
 | 1.4 | 2026-11-23 07:05 | Backlog wave: fonts, dark-mode navigation, category pickers, Settings categories, purge (FIX-20261123-06…10); expo-share-intent open item. |
 | 1.7 | 2026-11-24 16:47 | Cutover wizard + P0 count correction (FIX-20261124-11). |
+| 1.8 | 2026-11-25 01:55 | Product confirmations for ADR-0019, ADR-0023 and FIX-20261124-09; PRD updated. |
 | 1.6 | 2026-11-24 16:23 | Wave 6: banner split + downgrade banner, downgraded save block, server-side analytics with stored opt-out (FIX-20261124-08…10). |
 | 1.5 | 2026-11-24 04:48 | FIX-20261124-01…07: share-intent/SDK fix (+ expo-linking correction), account restore, plan-on-refresh, per-category reminders, notification taps, onboarding UTC, analytics. |

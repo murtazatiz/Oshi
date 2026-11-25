@@ -1,6 +1,6 @@
 # ADR-0023 — Day-5 upsell targets trial users; the downgrade banner targets the free plan
 
-**Status:** Accepted · **Decided:** 2026-11-24 · **Supersedes:** the audience of FIX-20261123-05
+**Status:** Accepted · **Decided:** 2026-11-24 · **Confirmed by product owner:** 2026-11-25 (PRD §8.3 updated to match) · **Supersedes:** the audience of FIX-20261123-05
 
 ## Context
 PRD §8.3 asks for a "Day 5 soft upsell banner on Library home screen for free users", and §3.7.4 asks for "a persistent soft banner on the Library: 'You're on the free plan — some features are limited. Upgrade to Pro.' Dismissible once per session." Every signup starts a 7-day trial (§8.1), so a free-plan user is always someone whose trial has ended. Read literally, the two banners target the same people. And on day 5 nobody is on the free plan, because they're still in their trial.
